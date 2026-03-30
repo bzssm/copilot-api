@@ -18,7 +18,9 @@ export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   let payload = await c.req.json<ChatCompletionsPayload>()
-  consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
+  consola.info("=== [OpenAI] Incoming Request ===")
+  consola.info("Headers:", Object.fromEntries(c.req.raw.headers.entries()))
+  consola.info("Payload:", JSON.stringify(payload, null, 2))
 
   // Find the selected model
   const selectedModel = state.models?.data.find(

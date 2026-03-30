@@ -192,6 +192,37 @@
 
         <!-- Content Area for dynamic data -->
         <main id="content-area"></main>
+
+        <!-- Token Usage Section -->
+        <section id="token-usage-section" class="mt-6">
+          <h2 class="text-xl font-bold flex items-center gap-2 mb-3" style="color: var(--color-fg-lightest)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-orange-accent)"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+            Token Usage (by Model)
+          </h2>
+          <div id="token-usage-content"></div>
+        </section>
+
+        <!-- Sessions Section -->
+        <section id="sessions-section" class="mt-6">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-xl font-bold flex items-center gap-2" style="color: var(--color-fg-lightest)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-purple-accent)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              Sessions
+            </h2>
+            <button id="refresh-sessions" class="text-sm px-3 py-1 transition-colors" style="background-color: var(--color-bg-light-2); color: var(--color-fg-medium);" onmouseover="this.style.backgroundColor='var(--color-bg-light-3)'" onmouseout="this.style.backgroundColor='var(--color-bg-light-2)'">
+              Refresh
+            </button>
+          </div>
+          <div id="sessions-list"></div>
+        </section>
+
+        <!-- Session Detail View (hidden by default) -->
+        <section id="session-detail" class="mt-6" style="display:none;">
+          <button id="back-to-sessions" class="text-sm px-3 py-1 mb-3 transition-colors flex items-center gap-1" style="background-color: var(--color-bg-light-2); color: var(--color-fg-medium);" onmouseover="this.style.backgroundColor='var(--color-bg-light-3)'" onmouseout="this.style.backgroundColor='var(--color-bg-light-2)'">
+            ← Back to Sessions
+          </button>
+          <div id="session-detail-content"></div>
+        </section>
       </div>
     </div>
 
@@ -518,6 +549,346 @@
 
         // Start the app
         init();
+
+        // === Sessions 功能 ===
+        const sessionsList = document.getElementById("sessions-list");
+        const sessionDetail = document.getElementById("session-detail");
+        const sessionDetailContent = document.getElementById("session-detail-content");
+        const sessionsSection = document.getElementById("sessions-section");
+        const refreshSessionsBtn = document.getElementById("refresh-sessions");
+        const backToSessionsBtn = document.getElementById("back-to-sessions");
+
+        function getBaseUrl() {
+          const endpoint = endpointUrlInput.value.trim();
+          // 从 usage endpoint 推导 base url，如 http://localhost:4141/usage -> http://localhost:4141
+          try {
+            const u = new URL(endpoint);
+            return u.origin;
+          } catch {
+            return "http://localhost:4141";
+          }
+        }
+
+        async function fetchSessions() {
+          sessionsList.innerHTML = renderSpinner();
+          try {
+            const res = await fetch(`${getBaseUrl()}/sessions`);
+            const sessions = await res.json();
+            if (!sessions.length) {
+              sessionsList.innerHTML = `<div class="text-center py-8 border" style="background-color: var(--color-bg-soft); border-color: var(--color-bg-light-2); color: var(--color-gray);">No sessions recorded. Start the server with --session-log to enable.</div>`;
+              return;
+            }
+            sessionsList.innerHTML = `<div class="border" style="border-color: var(--color-bg-light-2);">` +
+              sessions.map((s, i) => `
+                <div class="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors session-row"
+                     style="background-color: ${i % 2 === 0 ? 'var(--color-bg)' : 'var(--color-bg-soft)'};"
+                     onmouseover="this.style.backgroundColor='var(--color-bg-light-1)'"
+                     onmouseout="this.style.backgroundColor='${i % 2 === 0 ? 'var(--color-bg)' : 'var(--color-bg-soft)'}'"
+                     data-session-id="${s.sessionId}">
+                  <div>
+                    <span class="font-mono text-sm" style="color: var(--color-blue-accent);">${s.sessionId}</span>
+                    <span class="text-xs ml-2" style="color: var(--color-gray);">${s.recordCount} record${s.recordCount > 1 ? 's' : ''}</span>
+                  </div>
+                  <span class="text-xs font-mono" style="color: var(--color-fg-dark);">${new Date(s.updatedAt).toLocaleString()}</span>
+                </div>
+              `).join('') +
+              `</div>`;
+
+            // 绑定点击事件
+            sessionsList.querySelectorAll(".session-row").forEach(row => {
+              row.addEventListener("click", () => {
+                fetchSessionDetail(row.dataset.sessionId);
+              });
+            });
+          } catch (err) {
+            sessionsList.innerHTML = `<div class="p-3 border text-sm" style="background-color: rgba(204,36,29,0.2); border-color: var(--color-red); color: var(--color-red-accent);">Failed to load sessions: ${err.message}</div>`;
+          }
+        }
+
+        function renderSystemBlock(system) {
+          let text;
+          if (typeof system === "string") {
+            text = system;
+          } else if (Array.isArray(system)) {
+            text = system.filter(b => b.type === "text").map(b => b.text).join("\n");
+          } else {
+            text = JSON.stringify(system);
+          }
+          return `<div class="mb-2 p-3 border" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-darkest);">
+            <span class="text-xs font-bold uppercase" style="color: var(--color-yellow-accent);">system</span>
+            <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+          </div>`;
+        }
+
+        function renderContentBlock(block) {
+          const esc = (s) => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          if (typeof block === "string") {
+            return `<pre class="text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${esc(block)}</pre>`;
+          }
+          if (block.type === "text") {
+            return `<pre class="text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${esc(block.text)}</pre>`;
+          }
+          if (block.type === "tool_result") {
+            return `<div class="mt-1">
+              <span class="text-xs font-bold" style="color: var(--color-aqua-accent);">tool_result</span>
+              <span class="text-xs ml-1" style="color: var(--color-gray);">id: ${esc(block.tool_use_id)}${block.is_error ? ' (error)' : ''}</span>
+              <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${esc(typeof block.content === "string" ? block.content : JSON.stringify(block.content, null, 2))}</pre>
+            </div>`;
+          }
+          if (block.type === "tool_use") {
+            return `<div class="mt-1">
+              <span class="text-xs font-bold" style="color: var(--color-purple-accent);">tool_use</span>
+              <span class="text-xs ml-1" style="color: var(--color-gray);">${esc(block.name)} (${esc(block.id)})</span>
+              <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${esc(JSON.stringify(block.input, null, 2))}</pre>
+            </div>`;
+          }
+          if (block.type === "thinking") {
+            return `<div class="mt-1">
+              <span class="text-xs font-bold" style="color: var(--color-orange-accent);">thinking</span>
+              <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${esc(block.thinking)}</pre>
+            </div>`;
+          }
+          return `<pre class="text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${esc(JSON.stringify(block, null, 2))}</pre>`;
+        }
+
+        function renderMessages(messages) {
+          return messages.map(msg => {
+            const role = msg.role || "unknown";
+            const roleColors = {
+              user: "var(--color-green-accent)",
+              assistant: "var(--color-blue-accent)",
+              system: "var(--color-yellow-accent)",
+              tool: "var(--color-purple-accent)",
+            };
+            const color = roleColors[role] || "var(--color-gray)";
+            let blocksHtml;
+            if (typeof msg.content === "string") {
+              blocksHtml = renderContentBlock(msg.content);
+            } else if (Array.isArray(msg.content)) {
+              blocksHtml = msg.content.map(b => renderContentBlock(b)).join('');
+            } else {
+              blocksHtml = renderContentBlock(JSON.stringify(msg.content));
+            }
+            return `<div class="mb-2 p-3 border" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-darkest);">
+              <span class="text-xs font-bold uppercase" style="color: ${color};">${role}</span>
+              <div class="mt-1">${blocksHtml}</div>
+            </div>`;
+          }).join('');
+        }
+
+        function extractUsageFromResponse(response) {
+          if (Array.isArray(response)) {
+            // 流式：从 message_delta 事件中提取 usage
+            for (const evt of response) {
+              if (evt.type === "message_delta" && evt.usage) return evt.usage;
+            }
+            return null;
+          }
+          // 非流式：直接取 usage
+          return response?.usage || null;
+        }
+
+        function renderUsageBadge(usage) {
+          if (!usage) return '';
+          const parts = [];
+          if (usage.input_tokens != null) parts.push(`in: ${usage.input_tokens.toLocaleString()}`);
+          if (usage.output_tokens != null) parts.push(`out: ${usage.output_tokens.toLocaleString()}`);
+          if (usage.cache_read_input_tokens) parts.push(`cache: ${usage.cache_read_input_tokens.toLocaleString()}`);
+          return `<span class="text-xs font-mono px-2 py-0.5 ml-2" style="background-color: var(--color-bg-light-1); color: var(--color-orange-accent);">${parts.join(' | ')}</span>`;
+        }
+
+        function renderStreamEvents(events) {
+          // 从流式事件中提取各类内容
+          let textParts = [];
+          let thinkingParts = [];
+          let toolUseParts = [];
+
+          for (const evt of events) {
+            if (evt.type === "content_block_delta") {
+              if (evt.delta?.text) textParts.push(evt.delta.text);
+              if (evt.delta?.thinking) thinkingParts.push(evt.delta.thinking);
+              if (evt.delta?.partial_json) toolUseParts.push(evt.delta.partial_json);
+            }
+          }
+
+          let html = '';
+
+          if (thinkingParts.length) {
+            const thinking = thinkingParts.join('');
+            html += `<div class="mb-2 p-3 border" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-darkest);">
+              <span class="text-xs font-bold uppercase" style="color: var(--color-orange-accent);">thinking</span>
+              <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${thinking.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+            </div>`;
+          }
+
+          if (textParts.length) {
+            const fullText = textParts.join('');
+            html += `<div class="mb-2 p-3 border" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-darkest);">
+              <span class="text-xs font-bold uppercase" style="color: var(--color-blue-accent);">assistant</span>
+              <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${fullText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+            </div>`;
+          }
+
+          if (toolUseParts.length) {
+            const toolJson = toolUseParts.join('');
+            let formatted;
+            try {
+              formatted = JSON.stringify(JSON.parse(toolJson), null, 2);
+            } catch {
+              formatted = toolJson;
+            }
+            html += `<div class="mb-2 p-3 border" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-darkest);">
+              <span class="text-xs font-bold uppercase" style="color: var(--color-purple-accent);">tool use</span>
+              <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${formatted.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+            </div>`;
+          }
+
+          if (html) return html;
+
+          // 降级：展示完整原始事件 JSON
+          return `<div class="p-3 border" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-darkest);">
+            <span class="text-xs font-bold uppercase mb-1" style="color: var(--color-gray);">raw events (${events.length})</span>
+            <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-fg-medium);">${JSON.stringify(events, null, 2).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+          </div>`;
+        }
+
+        async function fetchSessionDetail(sessionId) {
+          sessionsSection.style.display = "none";
+          sessionDetail.style.display = "block";
+          sessionDetailContent.innerHTML = renderSpinner();
+
+          try {
+            const res = await fetch(`${getBaseUrl()}/sessions/${sessionId}`);
+            const data = await res.json();
+
+            sessionDetailContent.innerHTML = `
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold" style="color: var(--color-fg-lightest);">
+                  Session <span class="font-mono" style="color: var(--color-blue-accent);">${sessionId}</span>
+                  <span class="text-sm font-normal ml-2" style="color: var(--color-gray);">${data.records.length} record${data.records.length > 1 ? 's' : ''}</span>
+                </h2>
+                <button id="toggle-all-details" class="text-sm px-3 py-1 transition-colors" style="background-color: var(--color-bg-light-2); color: var(--color-fg-medium);" onmouseover="this.style.backgroundColor='var(--color-bg-light-3)'" onmouseout="this.style.backgroundColor='var(--color-bg-light-2)'">
+                  Expand All
+                </button>
+              </div>
+              ${(() => {
+                let totalIn = 0, totalOut = 0, totalCache = 0;
+                data.records.forEach(r => {
+                  const u = extractUsageFromResponse(r.response);
+                  if (u) { totalIn += u.input_tokens || 0; totalOut += u.output_tokens || 0; totalCache += u.cache_read_input_tokens || 0; }
+                });
+                return `<div class="mb-4 p-3 border flex items-center gap-6" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg);">
+                  <span class="text-sm font-bold" style="color: var(--color-fg-lightest);">Session Total</span>
+                  <span class="text-xs font-mono" style="color: var(--color-orange-accent);">in: ${totalIn.toLocaleString()}</span>
+                  <span class="text-xs font-mono" style="color: var(--color-orange-accent);">out: ${totalOut.toLocaleString()}</span>
+                  <span class="text-xs font-mono" style="color: var(--color-orange-accent);">cache: ${totalCache.toLocaleString()}</span>
+                  <span class="text-xs font-mono" style="color: var(--color-gray);">${data.records.length} requests</span>
+                </div>`;
+              })()}
+              ${data.records.map((record, idx) => `
+                <div class="mb-4 p-4 border" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-soft);">
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm font-bold" style="color: var(--color-fg-lightest);">#${idx + 1}</span>
+                    <div>
+                      <span class="text-xs px-2 py-0.5 mr-2" style="background-color: var(--color-bg-light-1); color: var(--color-aqua-accent);">${record.model}</span>
+                      ${renderUsageBadge(extractUsageFromResponse(record.response))}
+                      <span class="text-xs font-mono ml-2" style="color: var(--color-fg-dark);">${new Date(record.timestamp).toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <details class="mb-2">
+                    <summary class="text-sm cursor-pointer py-1" style="color: var(--color-yellow-accent);">Request Messages (${(record.request.system ? 1 : 0) + (record.request.messages?.length || 0)})</summary>
+                    <div class="mt-2">${record.request.system ? renderSystemBlock(record.request.system) : ''}${renderMessages(record.request.messages || [])}</div>
+                  </details>
+                  <details>
+                    <summary class="text-sm cursor-pointer py-1" style="color: var(--color-green-accent);">Response</summary>
+                    <div class="mt-2">${Array.isArray(record.response) ? renderStreamEvents(record.response) : `<pre class="p-3 text-xs border whitespace-pre-wrap" style="border-color: var(--color-bg-light-2); background-color: var(--color-bg-darkest); color: var(--color-fg-medium);">${JSON.stringify(record.response, null, 2).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`}</div>
+                  </details>
+                </div>
+              `).join('')}
+            `;
+
+            // 绑定展开/折叠按钮
+            const toggleBtn = document.getElementById("toggle-all-details");
+            let allExpanded = false;
+            toggleBtn.addEventListener("click", () => {
+              allExpanded = !allExpanded;
+              sessionDetailContent.querySelectorAll("details").forEach(d => d.open = allExpanded);
+              toggleBtn.textContent = allExpanded ? "Collapse All" : "Expand All";
+            });
+          } catch (err) {
+            sessionDetailContent.innerHTML = `<div class="p-3 border text-sm" style="background-color: rgba(204,36,29,0.2); border-color: var(--color-red); color: var(--color-red-accent);">Failed to load session: ${err.message}</div>`;
+          }
+        }
+
+        backToSessionsBtn.addEventListener("click", () => {
+          sessionDetail.style.display = "none";
+          sessionsSection.style.display = "block";
+        });
+
+        refreshSessionsBtn.addEventListener("click", fetchSessions);
+
+        // 页面加载时自动拉取 sessions
+        fetchSessions();
+
+        // === Token Usage 功能 ===
+        const tokenUsageContent = document.getElementById("token-usage-content");
+
+        async function fetchTokenUsage() {
+          try {
+            const res = await fetch(`${getBaseUrl()}/token-usage`);
+            if (!res.ok) {
+              tokenUsageContent.innerHTML = `<div class="text-center py-4 border text-sm" style="background-color: var(--color-bg-soft); border-color: var(--color-bg-light-2); color: var(--color-gray);">Token usage endpoint not available.</div>`;
+              return;
+            }
+            const data = await res.json();
+            const models = Object.entries(data);
+            if (!models.length) {
+              tokenUsageContent.innerHTML = `<div class="text-center py-4 border text-sm" style="background-color: var(--color-bg-soft); border-color: var(--color-bg-light-2); color: var(--color-gray);">No token usage recorded yet.</div>`;
+              return;
+            }
+
+            // 计算总计
+            let totalIn = 0, totalOut = 0, totalCache = 0, totalReqs = 0;
+            models.forEach(([, u]) => { totalIn += u.input_tokens; totalOut += u.output_tokens; totalCache += u.cache_read_input_tokens; totalReqs += u.request_count; });
+
+            tokenUsageContent.innerHTML = `
+              <div class="border" style="border-color: var(--color-bg-light-2);">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr style="background-color: var(--color-bg-light-1);">
+                      <th class="text-left px-4 py-2" style="color: var(--color-fg-lightest);">Model</th>
+                      <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Requests</th>
+                      <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Input Tokens</th>
+                      <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Output Tokens</th>
+                      <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Cache Read</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${models.map(([model, u], i) => `
+                      <tr style="background-color: ${i % 2 === 0 ? 'var(--color-bg)' : 'var(--color-bg-soft)'};">
+                        <td class="px-4 py-2 font-mono" style="color: var(--color-blue-accent);">${model}</td>
+                        <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.request_count.toLocaleString()}</td>
+                        <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.input_tokens.toLocaleString()}</td>
+                        <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.output_tokens.toLocaleString()}</td>
+                        <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.cache_read_input_tokens.toLocaleString()}</td>
+                      </tr>
+                    `).join('')}
+                    <tr style="background-color: var(--color-bg-light-1); font-weight: bold;">
+                      <td class="px-4 py-2" style="color: var(--color-fg-lightest);">Total</td>
+                      <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalReqs.toLocaleString()}</td>
+                      <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalIn.toLocaleString()}</td>
+                      <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalOut.toLocaleString()}</td>
+                      <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalCache.toLocaleString()}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>`;
+          } catch (err) {
+            tokenUsageContent.innerHTML = `<div class="p-3 border text-sm" style="background-color: rgba(204,36,29,0.2); border-color: var(--color-red); color: var(--color-red-accent);">Failed to load token usage: ${err.message}</div>`;
+          }
+        }
+
+        fetchTokenUsage();
       });
     </script>
 

@@ -12,3 +12,7 @@ node_modules/
 
 # build output
 dist/
+
+# session logs
+sessions/
+token-usage.json
