@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "createdAt": "2026-04-07T03:39:53.7708407Z",
+  "status": "in_progress",
+  "repos": [
+    {
+      "name": "copilot-api",
+      "url": "https://github.com/bzssm/copilot-api",
+      "clonePath": "C:\\Users\\royyang\\projects\\testrepos\\bzssmcopilot\\repos\\copilot-api",
+      "statusFileDirectory": "C:\\Users\\royyang\\projects\\testrepos\\bzssmcopilot\\repos\\copilot-api\\.github\\modernize\\delegation",
+      "sessionId": "25bd4cb0-f4db-4116-86a6-a9c820af0f3e",
+      "detectedLanguage": "JavaScript",
+      "relativePath": ""
+    }
+  ]
+}
