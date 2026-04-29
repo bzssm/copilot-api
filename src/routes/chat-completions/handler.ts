@@ -7,7 +7,7 @@ import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
-import { isNullish } from "~/lib/utils"
+import { isNullish, requiresMaxCompletionTokens } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionResponse,
@@ -71,11 +71,6 @@ export async function handleCompletion(c: Context) {
     }
   })
 }
-
-const MAX_COMPLETION_TOKENS_MODELS = ["gpt-5.4", "gpt-5.5"]
-
-const requiresMaxCompletionTokens = (model: string): boolean =>
-  MAX_COMPLETION_TOKENS_MODELS.some((m) => model.startsWith(m))
 
 const isNonStreaming = (
   response: Awaited<ReturnType<typeof createChatCompletions>>,

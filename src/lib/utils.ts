@@ -13,6 +13,11 @@ export const sleep = (ms: number) =>
 export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined
 
+const MAX_COMPLETION_TOKENS_MODELS = ["gpt-5.4", "gpt-5.5"]
+
+export const requiresMaxCompletionTokens = (model: string): boolean =>
+  MAX_COMPLETION_TOKENS_MODELS.some((m) => model.startsWith(m))
+
 export async function cacheModels(): Promise<void> {
   const models = await getModels()
   state.models = models

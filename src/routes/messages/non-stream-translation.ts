@@ -1,3 +1,4 @@
+import { requiresMaxCompletionTokens } from "~/lib/utils"
 import {
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
@@ -35,7 +36,9 @@ export function translateToOpenAI(
       payload.messages,
       payload.system,
     ),
-    max_tokens: payload.max_tokens,
+    ...(requiresMaxCompletionTokens(payload.model) ?
+      { max_completion_tokens: payload.max_tokens }
+    : { max_tokens: payload.max_tokens }),
     stop: payload.stop_sequences,
     stream: payload.stream,
     temperature: payload.temperature,
