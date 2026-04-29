@@ -41,12 +41,19 @@ export async function handleCompletion(c: Context) {
 
   if (state.manualApprove) await awaitApproval()
 
-  if (isNullish(payload.max_tokens)) {
-    payload = {
-      ...payload,
-      max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
+  if (
+    isNullish(payload.max_tokens)
+    && isNullish(payload.max_completion_tokens)
+  ) {
+    const maxOutputTokens = selectedModel?.capabilities.limits.max_output_tokens
+
+    if (requiresMaxCompletionTokens(payload.model)) {
+      payload = { ...payload, max_completion_tokens: maxOutputTokens }
+      consola.debug("Set max_completion_tokens to:", maxOutputTokens)
+    } else {
+      payload = { ...payload, max_tokens: maxOutputTokens }
+      consola.debug("Set max_tokens to:", maxOutputTokens)
     }
-    consola.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
   }
 
   const response = await createChatCompletions(payload)
@@ -64,6 +71,11 @@ export async function handleCompletion(c: Context) {
     }
   })
 }
+
+const MAX_COMPLETION_TOKENS_MODELS = ["gpt-5.4", "gpt-5.5"]
+
+const requiresMaxCompletionTokens = (model: string): boolean =>
+  MAX_COMPLETION_TOKENS_MODELS.some((m) => model.startsWith(m))
 
 const isNonStreaming = (
   response: Awaited<ReturnType<typeof createChatCompletions>>,
