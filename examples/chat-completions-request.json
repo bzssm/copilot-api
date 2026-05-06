@@ -1,0 +1,34 @@
+{
+  "model": "claude-opus-4.6",
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "stream": true,
+  "top_p": 0.9,
+  "stop": ["\n\nHuman:"],
+  "frequency_penalty": 0,
+  "presence_penalty": 0,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful coding assistant. Always provide clear explanations with code examples."
+    },
+    {
+      "role": "user",
+      "content": "Write a fibonacci function in TypeScript"
+    },
+    {
+      "role": "assistant",
+      "content": "Here's a simple recursive fibonacci function in TypeScript."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Now add memoization to it and explain the performance difference"
+        }
+      ]
+    }
+  ],
+  "user": "user-123"
+}

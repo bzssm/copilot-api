@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.5",
+  "max_tokens": 4096,
+  "temperature": 0.7,
+    "stream": true,
+
+  "top_p": 0.9,
+  "stop_sequences": ["\n\nHuman:"],
+  "system": "You are a helpful coding assistant. Always provide clear explanations with code examples.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a fibonacci function in TypeScript"
+    },
+    {
+      "role": "assistant",
+      "content": "Here's a simple recursive fibonacci function in TypeScript."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Now add memoization to it and explain the performance difference"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "user_id": "user-123"
+  }
+}

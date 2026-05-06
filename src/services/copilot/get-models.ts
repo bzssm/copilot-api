@@ -28,6 +28,9 @@ interface ModelSupports {
   tool_calls?: boolean
   parallel_tool_calls?: boolean
   dimensions?: boolean
+  reasoning_effort?: Array<string>
+  structured_outputs?: boolean
+  adaptive_thinking?: boolean
 }
 
 interface ModelCapabilities {
@@ -52,4 +55,5 @@ export interface Model {
     state: string
     terms: string
   }
+  supported_endpoints?: Array<string>
 }

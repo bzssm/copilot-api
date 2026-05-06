@@ -1,21 +1,20 @@
-import fs from "node:fs/promises"
-import path from "node:path"
-import url from "node:url"
-
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
+import fs from "node:fs/promises"
+import path from "node:path"
 
-import { completionRoutes } from "./routes/chat-completions/route"
-import { embeddingRoutes } from "./routes/embeddings/route"
 import { getSession, getSessions } from "./lib/session-store"
 import { getUsageStats } from "./lib/usage-tracker"
+import { completionRoutes } from "./routes/chat-completions/route"
+import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
+import { responsesRoutes } from "./routes/responses/route"
 import { tokenRoute } from "./routes/token/route"
 import { usageRoute } from "./routes/usage/route"
 
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url))
+const __dirname = import.meta.dirname
 
 export const server = new Hono()
 
@@ -26,7 +25,7 @@ server.get("/", (c) => c.text("Server running"))
 
 server.get("/dashboard", async (c) => {
   const htmlPath = path.resolve(__dirname, "..", "pages", "index.html")
-  const html = await fs.readFile(htmlPath, "utf-8")
+  const html = await fs.readFile(htmlPath, "utf8")
   return c.html(html)
 })
 
@@ -57,6 +56,10 @@ server.route("/token", tokenRoute)
 server.route("/v1/chat/completions", completionRoutes)
 server.route("/v1/models", modelRoutes)
 server.route("/v1/embeddings", embeddingRoutes)
+
+// OpenAI Responses API
+server.route("/responses", responsesRoutes)
+server.route("/v1/responses", responsesRoutes)
 
 // Anthropic compatible endpoints
 server.route("/v1/messages", messageRoutes)

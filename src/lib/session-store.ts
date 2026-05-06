@@ -1,10 +1,8 @@
+import consola from "consola"
 import fs from "node:fs/promises"
 import path from "node:path"
-import url from "node:url"
 
-import consola from "consola"
-
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url))
+const __dirname = import.meta.dirname
 const SESSIONS_DIR = path.resolve(__dirname, "..", "..", "sessions")
 
 export interface SessionRecord {
@@ -16,7 +14,7 @@ export interface SessionRecord {
 
 interface SessionFile {
   sessionId: string
-  records: SessionRecord[]
+  records: Array<SessionRecord>
 }
 
 async function ensureSessionsDir(): Promise<void> {
@@ -36,7 +34,7 @@ export async function addRecord(
 
     let sessionFile: SessionFile
     try {
-      const content = await fs.readFile(filePath, "utf-8")
+      const content = await fs.readFile(filePath)
       sessionFile = JSON.parse(content) as SessionFile
     } catch {
       sessionFile = { sessionId, records: [] }
@@ -66,7 +64,7 @@ export async function getSessions(): Promise<
         .filter((f) => f.endsWith(".json"))
         .map(async (f) => {
           const filePath = path.join(SESSIONS_DIR, f)
-          const content = await fs.readFile(filePath, "utf-8")
+          const content = await fs.readFile(filePath)
           const data = JSON.parse(content) as SessionFile
           const stat = await fs.stat(filePath)
           return {
@@ -87,7 +85,7 @@ export async function getSession(
 ): Promise<SessionFile | null> {
   try {
     const filePath = path.join(SESSIONS_DIR, `${sessionId}.json`)
-    const content = await fs.readFile(filePath, "utf-8")
+    const content = await fs.readFile(filePath)
     return JSON.parse(content) as SessionFile
   } catch {
     return null

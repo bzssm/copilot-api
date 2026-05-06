@@ -1,4 +1,4 @@
-import { requiresMaxCompletionTokens } from "~/lib/utils"
+import { isGpt5OrAbove } from "~/lib/utils"
 import {
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
@@ -36,13 +36,13 @@ export function translateToOpenAI(
       payload.messages,
       payload.system,
     ),
-    ...(requiresMaxCompletionTokens(payload.model) ?
+    ...(isGpt5OrAbove(payload.model) ?
       { max_completion_tokens: payload.max_tokens }
     : { max_tokens: payload.max_tokens }),
-    stop: payload.stop_sequences,
+    stop: isGpt5OrAbove(payload.model) ? undefined : payload.stop_sequences,
     stream: payload.stream,
-    temperature: payload.temperature,
-    top_p: payload.top_p,
+    temperature: isGpt5OrAbove(payload.model) ? undefined : payload.temperature,
+    top_p: isGpt5OrAbove(payload.model) ? undefined : payload.top_p,
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
