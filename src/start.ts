@@ -65,6 +65,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
   )
+  consola.info("Full models response:", JSON.stringify(state.models, null, 2))
 
   const serverUrl = `http://localhost:${options.port}`
 
@@ -112,9 +113,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     }
   }
 
-  consola.box(
-    `🌐 Dashboard: ${serverUrl}/dashboard`,
-  )
+  consola.box(`🌐 Dashboard: ${serverUrl}/dashboard`)
 
   serve({
     fetch: server.fetch as ServerHandler,
