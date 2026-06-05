@@ -12,6 +12,7 @@ export interface State {
   rateLimitWait: boolean
   showToken: boolean
   sessionLog: boolean
+  fuzzyModelMatch: boolean
 
   // Rate limiting configuration
   rateLimitSeconds?: number
@@ -24,4 +25,5 @@ export const state: State = {
   rateLimitWait: false,
   showToken: false,
   sessionLog: false,
+  fuzzyModelMatch: false,
 }

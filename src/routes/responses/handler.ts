@@ -9,7 +9,7 @@ import { selectEndpoint } from "~/lib/endpoint-selector"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { trackUsage } from "~/lib/usage-tracker"
-import { isGpt5OrAbove } from "~/lib/utils"
+import { isGpt5OrAbove, resolveModelName } from "~/lib/utils"
 import {
   translateResponsesPayloadToChatCompletions,
   translateChatCompletionResponseToResponses,
@@ -31,6 +31,7 @@ export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   const payload = await c.req.json<ResponsesPayload>()
+  payload.model = resolveModelName(payload.model)
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,

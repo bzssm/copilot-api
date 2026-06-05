@@ -9,7 +9,7 @@ import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { trackUsage } from "~/lib/usage-tracker"
-import { isGpt5OrAbove, isNullish } from "~/lib/utils"
+import { isGpt5OrAbove, isNullish, resolveModelName } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionResponse,
@@ -29,6 +29,7 @@ export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   let payload = await c.req.json<ChatCompletionsPayload>()
+  payload.model = resolveModelName(payload.model)
   // Find the selected model
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,

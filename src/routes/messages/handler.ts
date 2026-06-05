@@ -10,7 +10,7 @@ import { addRecord } from "~/lib/session-store"
 import { state } from "~/lib/state"
 import { KEEPALIVE_PING, withKeepalive } from "~/lib/stream-keepalive"
 import { trackUsage } from "~/lib/usage-tracker"
-import { isGpt5OrAbove } from "~/lib/utils"
+import { isGpt5OrAbove, resolveModelName } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -42,6 +42,7 @@ export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  anthropicPayload.model = resolveModelName(anthropicPayload.model)
 
   // 从 metadata.user_id 中解析 session_id
   let sessionId: string | undefined

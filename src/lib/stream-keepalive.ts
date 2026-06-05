@@ -16,7 +16,7 @@ export type WithKeepalive<T> = T | typeof KEEPALIVE_PING
 
 export async function* withKeepalive<T>(
   source: AsyncIterable<T>,
-  intervalMs = 15_000,
+  intervalMs = 5_000,
 ): AsyncGenerator<WithKeepalive<T>> {
   const iterator = source[Symbol.asyncIterator]()
 
