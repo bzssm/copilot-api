@@ -8,6 +8,7 @@ import { selectEndpoint } from "~/lib/endpoint-selector"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { addRecord } from "~/lib/session-store"
 import { state } from "~/lib/state"
+import { KEEPALIVE_PING, withKeepalive } from "~/lib/stream-keepalive"
 import { trackUsage } from "~/lib/usage-tracker"
 import { isGpt5OrAbove } from "~/lib/utils"
 import {
@@ -158,7 +159,12 @@ async function handleNativeMessages(
   return streamSSE(c, async (stream) => {
     const collectedEvents: Array<unknown> = []
 
-    for await (const rawEvent of response) {
+    for await (const rawEvent of withKeepalive(response)) {
+      if (rawEvent === KEEPALIVE_PING) {
+        await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
+        continue
+      }
+
       if (!rawEvent.data || rawEvent.data === "[DONE]") continue
 
       const event = JSON.parse(rawEvent.data) as {
@@ -253,7 +259,12 @@ async function handleViaTranslation(
 
     const collectedEvents: Array<unknown> = []
 
-    for await (const rawEvent of response) {
+    for await (const rawEvent of withKeepalive(response)) {
+      if (rawEvent === KEEPALIVE_PING) {
+        await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
+        continue
+      }
+
       consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
       if (rawEvent.data === "[DONE]") {
         break
@@ -362,7 +373,12 @@ async function handleViaResponses(
     const collectedEvents: Array<unknown> = []
     let messageStartSent = false
 
-    for await (const rawEvent of response) {
+    for await (const rawEvent of withKeepalive(response)) {
+      if (rawEvent === KEEPALIVE_PING) {
+        await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
+        continue
+      }
+
       if (!rawEvent.data || rawEvent.data === "[DONE]") continue
 
       const event = JSON.parse(rawEvent.data) as {
