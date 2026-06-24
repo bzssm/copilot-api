@@ -702,6 +702,7 @@
           let textParts = [];
           let thinkingParts = [];
           let toolUseParts = [];
+          let errorParts = [];
 
           for (const evt of events) {
             if (evt.type === "content_block_delta") {
@@ -709,9 +710,18 @@
               if (evt.delta?.thinking) thinkingParts.push(evt.delta.thinking);
               if (evt.delta?.partial_json) toolUseParts.push(evt.delta.partial_json);
             }
+            if (evt.type === "_proxy_error") errorParts.push(evt.message || "Unknown error");
           }
 
           let html = '';
+
+          if (errorParts.length) {
+            const errorText = errorParts.join('\n');
+            html += `<div class="mb-2 p-3 border" style="border-color: var(--color-red); background-color: rgba(204,36,29,0.2);">
+              <span class="text-xs font-bold uppercase" style="color: var(--color-red-accent);">⚠ proxy error</span>
+              <pre class="mt-1 text-xs whitespace-pre-wrap" style="color: var(--color-red-accent);">${errorText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+            </div>`;
+          }
 
           if (thinkingParts.length) {
             const thinking = thinkingParts.join('');

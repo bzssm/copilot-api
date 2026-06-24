@@ -133,75 +133,98 @@ async function handleNativeMessages(
     payload = rest as AnthropicMessagesPayload
   }
 
-  const response = await createMessages(payload)
+  // 非流式：直接 await 拿到完整 JSON 响应
+  if (!payload.stream) {
+    const response = await createMessages(payload)
 
-  if (isAnthropicResponse(response)) {
-    consola.debug("Non-streaming native messages response")
+    if (isAnthropicResponse(response)) {
+      trackUsage(anthropicPayload.model, {
+        input_tokens: response.usage.input_tokens,
+        output_tokens: response.usage.output_tokens,
+        cache_read_input_tokens: response.usage.cache_read_input_tokens ?? 0,
+      })
 
-    trackUsage(anthropicPayload.model, {
-      input_tokens: response.usage.input_tokens,
-      output_tokens: response.usage.output_tokens,
-      cache_read_input_tokens: response.usage.cache_read_input_tokens ?? 0,
-    })
-
-    if (state.sessionLog && sessionId) {
-      await addRecord(
-        sessionId,
-        anthropicPayload.model,
-        anthropicPayload,
-        response,
-      )
+      if (state.sessionLog && sessionId) {
+        await addRecord(
+          sessionId,
+          anthropicPayload.model,
+          anthropicPayload,
+          response,
+        )
+      }
     }
 
     return c.json(response)
   }
 
-  consola.debug("Streaming native messages response")
+  // 流式：先建立 SSE 连接，把上游 promise 交给 withKeepalive，
+  // 这样从连接建立的那一刻起就开始发心跳，覆盖「等响应头」的空窗。
+  const upstream = createMessages(payload) as unknown as Promise<
+    AsyncIterable<{ data?: string; event?: string }>
+  >
+
   return streamSSE(c, async (stream) => {
     const collectedEvents: Array<unknown> = []
 
-    for await (const rawEvent of withKeepalive(response)) {
-      if (rawEvent === KEEPALIVE_PING) {
-        await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
-        continue
-      }
-
-      if (!rawEvent.data || rawEvent.data === "[DONE]") continue
-
-      const event = JSON.parse(rawEvent.data) as {
-        type: string
-        usage?: {
-          input_tokens?: number
-          output_tokens?: number
-          cache_read_input_tokens?: number
+    try {
+      for await (const rawEvent of withKeepalive(upstream)) {
+        if (rawEvent === KEEPALIVE_PING) {
+          await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
+          continue
         }
+
+        if (!rawEvent.data || rawEvent.data === "[DONE]") continue
+
+        const event = JSON.parse(rawEvent.data) as {
+          type: string
+          usage?: {
+            input_tokens?: number
+            output_tokens?: number
+            cache_read_input_tokens?: number
+          }
+        }
+
+        if (state.sessionLog && sessionId) {
+          collectedEvents.push(event)
+        }
+
+        if (event.type === "message_delta" && event.usage) {
+          trackUsage(anthropicPayload.model, {
+            input_tokens: event.usage.input_tokens ?? 0,
+            output_tokens: event.usage.output_tokens ?? 0,
+            cache_read_input_tokens: event.usage.cache_read_input_tokens ?? 0,
+          })
+        }
+
+        await stream.writeSSE({
+          event: event.type,
+          data: JSON.stringify(event),
+        })
       }
+    } catch (error) {
+      consola.error("Native messages stream failed:", error)
+      const message = error instanceof Error ? error.message : String(error)
 
       if (state.sessionLog && sessionId) {
-        collectedEvents.push(event)
-      }
-
-      if (event.type === "message_delta" && event.usage) {
-        trackUsage(anthropicPayload.model, {
-          input_tokens: event.usage.input_tokens ?? 0,
-          output_tokens: event.usage.output_tokens ?? 0,
-          cache_read_input_tokens: event.usage.cache_read_input_tokens ?? 0,
-        })
+        collectedEvents.push({ type: "_proxy_error", message })
       }
 
       await stream.writeSSE({
-        event: event.type,
-        data: JSON.stringify(event),
+        event: "error",
+        data: JSON.stringify({
+          type: "error",
+          error: { type: "api_error", message },
+        }),
       })
-    }
-
-    if (state.sessionLog && sessionId) {
-      await addRecord(
-        sessionId,
-        anthropicPayload.model,
-        anthropicPayload,
-        collectedEvents,
-      )
+    } finally {
+      if (state.sessionLog && sessionId) {
+        await addRecord(
+          sessionId,
+          anthropicPayload.model,
+          anthropicPayload,
+          collectedEvents,
+        )
+      }
     }
   })
 }
@@ -260,62 +283,73 @@ async function handleViaTranslation(
 
     const collectedEvents: Array<unknown> = []
 
-    for await (const rawEvent of withKeepalive(response)) {
-      if (rawEvent === KEEPALIVE_PING) {
-        await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
-        continue
-      }
-
-      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
-      if (rawEvent.data === "[DONE]") {
-        break
-      }
-
-      if (!rawEvent.data) {
-        continue
-      }
-
-      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      const events = translateChunkToAnthropicEvents(chunk, streamState)
-
-      for (const event of events) {
-        consola.debug("Translated Anthropic event:", JSON.stringify(event))
-        if (state.sessionLog && sessionId) {
-          collectedEvents.push(event)
+    try {
+      for await (const rawEvent of withKeepalive(response)) {
+        if (rawEvent === KEEPALIVE_PING) {
+          await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
+          continue
         }
 
-        if (event.type === "message_delta") {
-          const msgDelta = event as {
-            usage?: {
-              input_tokens?: number
-              output_tokens?: number
-              cache_read_input_tokens?: number
+        consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+        if (rawEvent.data === "[DONE]") {
+          break
+        }
+
+        if (!rawEvent.data) {
+          continue
+        }
+
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        const events = translateChunkToAnthropicEvents(chunk, streamState)
+
+        for (const event of events) {
+          consola.debug("Translated Anthropic event:", JSON.stringify(event))
+          if (state.sessionLog && sessionId) {
+            collectedEvents.push(event)
+          }
+
+          if (event.type === "message_delta") {
+            const msgDelta = event as {
+              usage?: {
+                input_tokens?: number
+                output_tokens?: number
+                cache_read_input_tokens?: number
+              }
+            }
+            if (msgDelta.usage) {
+              trackUsage(anthropicPayload.model, {
+                input_tokens: msgDelta.usage.input_tokens ?? 0,
+                output_tokens: msgDelta.usage.output_tokens ?? 0,
+                cache_read_input_tokens:
+                  msgDelta.usage.cache_read_input_tokens ?? 0,
+              })
             }
           }
-          if (msgDelta.usage) {
-            trackUsage(anthropicPayload.model, {
-              input_tokens: msgDelta.usage.input_tokens ?? 0,
-              output_tokens: msgDelta.usage.output_tokens ?? 0,
-              cache_read_input_tokens:
-                msgDelta.usage.cache_read_input_tokens ?? 0,
-            })
-          }
-        }
 
-        await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event),
+          await stream.writeSSE({
+            event: event.type,
+            data: JSON.stringify(event),
+          })
+        }
+      }
+    } catch (error) {
+      consola.error("[Session Log] Translation stream failed:", error)
+      if (state.sessionLog && sessionId) {
+        collectedEvents.push({
+          type: "_proxy_error",
+          message: error instanceof Error ? error.message : String(error),
         })
       }
-    }
-
-    if (state.sessionLog && sessionId) {
-      await addRecord(
-        sessionId,
-        anthropicPayload.model,
-        anthropicPayload,
-        collectedEvents,
-      )
+      throw error
+    } finally {
+      if (state.sessionLog && sessionId) {
+        await addRecord(
+          sessionId,
+          anthropicPayload.model,
+          anthropicPayload,
+          collectedEvents,
+        )
+      }
     }
   })
 }
@@ -374,77 +408,88 @@ async function handleViaResponses(
     const collectedEvents: Array<unknown> = []
     let messageStartSent = false
 
-    for await (const rawEvent of withKeepalive(response)) {
-      if (rawEvent === KEEPALIVE_PING) {
-        await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
-        continue
-      }
+    try {
+      for await (const rawEvent of withKeepalive(response)) {
+        if (rawEvent === KEEPALIVE_PING) {
+          await stream.writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
+          continue
+        }
 
-      if (!rawEvent.data || rawEvent.data === "[DONE]") continue
+        if (!rawEvent.data || rawEvent.data === "[DONE]") continue
 
-      const event = JSON.parse(rawEvent.data) as {
-        type: string
-        response?: ResponsesResponse
-        delta?: string
-        content_index?: number
-        output_index?: number
-        item?: {
+        const event = JSON.parse(rawEvent.data) as {
           type: string
-          call_id?: string
-          name?: string
-          arguments?: string
-        }
-        part?: { type: string; text?: string }
-      }
-
-      // Translate Responses streaming events to Anthropic streaming events
-      const anthropicEvents = translateResponsesStreamEventToAnthropic(
-        event,
-        messageStartSent,
-        anthropicPayload.model,
-      )
-
-      for (const anthropicEvent of anthropicEvents.events) {
-        if (state.sessionLog && sessionId) {
-          collectedEvents.push(anthropicEvent)
+          response?: ResponsesResponse
+          delta?: string
+          content_index?: number
+          output_index?: number
+          item?: {
+            type: string
+            call_id?: string
+            name?: string
+            arguments?: string
+          }
+          part?: { type: string; text?: string }
         }
 
-        if (anthropicEvent.type === "message_delta") {
-          const msgDelta = anthropicEvent as {
-            usage?: {
-              input_tokens?: number
-              output_tokens?: number
-              cache_read_input_tokens?: number
+        // Translate Responses streaming events to Anthropic streaming events
+        const anthropicEvents = translateResponsesStreamEventToAnthropic(
+          event,
+          messageStartSent,
+          anthropicPayload.model,
+        )
+
+        for (const anthropicEvent of anthropicEvents.events) {
+          if (state.sessionLog && sessionId) {
+            collectedEvents.push(anthropicEvent)
+          }
+
+          if (anthropicEvent.type === "message_delta") {
+            const msgDelta = anthropicEvent as {
+              usage?: {
+                input_tokens?: number
+                output_tokens?: number
+                cache_read_input_tokens?: number
+              }
+            }
+            if (msgDelta.usage) {
+              trackUsage(anthropicPayload.model, {
+                input_tokens: msgDelta.usage.input_tokens ?? 0,
+                output_tokens: msgDelta.usage.output_tokens ?? 0,
+                cache_read_input_tokens:
+                  msgDelta.usage.cache_read_input_tokens ?? 0,
+              })
             }
           }
-          if (msgDelta.usage) {
-            trackUsage(anthropicPayload.model, {
-              input_tokens: msgDelta.usage.input_tokens ?? 0,
-              output_tokens: msgDelta.usage.output_tokens ?? 0,
-              cache_read_input_tokens:
-                msgDelta.usage.cache_read_input_tokens ?? 0,
-            })
-          }
+
+          await stream.writeSSE({
+            event: anthropicEvent.type,
+            data: JSON.stringify(anthropicEvent),
+          })
         }
 
-        await stream.writeSSE({
-          event: anthropicEvent.type,
-          data: JSON.stringify(anthropicEvent),
+        if (anthropicEvents.messageStartSent) {
+          messageStartSent = true
+        }
+      }
+    } catch (error) {
+      consola.error("[Session Log] Responses stream failed:", error)
+      if (state.sessionLog && sessionId) {
+        collectedEvents.push({
+          type: "_proxy_error",
+          message: error instanceof Error ? error.message : String(error),
         })
       }
-
-      if (anthropicEvents.messageStartSent) {
-        messageStartSent = true
+      throw error
+    } finally {
+      if (state.sessionLog && sessionId) {
+        await addRecord(
+          sessionId,
+          anthropicPayload.model,
+          anthropicPayload,
+          collectedEvents,
+        )
       }
-    }
-
-    if (state.sessionLog && sessionId) {
-      await addRecord(
-        sessionId,
-        anthropicPayload.model,
-        anthropicPayload,
-        collectedEvents,
-      )
     }
   })
 }
