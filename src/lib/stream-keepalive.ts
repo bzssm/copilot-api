@@ -26,10 +26,10 @@ export async function* withKeepalive<T>(
   source: AsyncIterable<T> | Promise<AsyncIterable<T>>,
   intervalMs = 5_000,
 ): AsyncGenerator<WithKeepalive<T>> {
-  let pingCount = 0
-
   // Phase 1: if the upstream is still a pending promise (e.g. awaiting response
   // headers), emit keepalive pings until it resolves.
+  let headerPingCount = 0
+
   let iterable: AsyncIterable<T>
   if (source instanceof Promise) {
     let resolved = false
@@ -48,10 +48,10 @@ export async function* withKeepalive<T>(
 
       if (timer) clearTimeout(timer)
 
-      if (winner === KEEPALIVE_PING && !resolved) {
-        pingCount += 1
+      if (winner === KEEPALIVE_PING) {
+        headerPingCount += 1
         consola.info(
-          `[Keepalive] awaiting upstream headers, ping sent * ${pingCount}`,
+          `[Keepalive] awaiting upstream headers, ping sent * ${headerPingCount}`,
         )
         yield KEEPALIVE_PING
       }
@@ -64,6 +64,7 @@ export async function* withKeepalive<T>(
 
   // Phase 2: iterate the upstream, emitting a ping whenever it idles past the
   // interval between events.
+  let idlePingCount = 0
   const iterator = iterable[Symbol.asyncIterator]()
 
   let nextPromise = iterator.next()
@@ -80,18 +81,18 @@ export async function* withKeepalive<T>(
       if (timer) clearTimeout(timer)
 
       if (winner === KEEPALIVE_PING) {
-        pingCount += 1
-        consola.info(`[Keepalive] upstream idle, ping sent * ${pingCount}`)
+        idlePingCount += 1
+        consola.info(`[Keepalive] upstream idle, ping sent * ${idlePingCount}`)
         yield KEEPALIVE_PING
         continue
       }
 
-      const result = winner as IteratorResult<T>
+      const result = winner
       if (result.done) {
         return
       }
 
-      pingCount = 0
+      idlePingCount = 0
       yield result.value
       nextPromise = iterator.next()
     }
