@@ -94,6 +94,26 @@ export function resolveModelName(input: string): string {
 
 export async function cacheModels(): Promise<void> {
   const models = await getModels()
+
+  const overrides = state.contextWindowOverrides
+  if (overrides) {
+    for (const [modelId, contextWindow] of Object.entries(overrides)) {
+      const model = models.data.find((m) => m.id === modelId)
+      if (!model) {
+        consola.warn(
+          `Context window override for "${modelId}" ignored: model not found`,
+        )
+        continue
+      }
+      model.capabilities.limits.max_context_window_tokens = contextWindow
+      model.capabilities.limits.max_prompt_tokens =
+        contextWindow - (model.capabilities.limits.max_output_tokens ?? 0)
+      consola.info(
+        `Overrode context window for "${modelId}" -> ${contextWindow}`,
+      )
+    }
+  }
+
   state.models = models
 }
 

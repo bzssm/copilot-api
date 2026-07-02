@@ -29,6 +29,29 @@ modelRoutes.get("/", async (c) => {
         model.capabilities?.limits?.max_context_window_tokens
       const idSuffix = contextWindow === 1000000 ? "[1m]" : ""
 
+      const supports = model.capabilities?.supports
+      const thinking =
+        supports?.adaptive_thinking === true ?
+          {
+            supported: true,
+            types: {
+              adaptive: { supported: true },
+              enabled: { supported: false },
+            },
+          }
+        : (
+          supports?.max_thinking_budget != null
+          && supports?.min_thinking_budget != null
+        ) ?
+          {
+            supported: true,
+            types: {
+              adaptive: { supported: false },
+              enabled: { supported: true },
+            },
+          }
+        : { supported: false }
+
       return {
         id: `${model.id}${idSuffix}`,
         object: "model",
@@ -45,6 +68,7 @@ modelRoutes.get("/", async (c) => {
             supported:
               model.capabilities?.supports?.structured_outputs === true,
           },
+          thinking,
         },
       }
     })

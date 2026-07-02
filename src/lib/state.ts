@@ -14,6 +14,9 @@ export interface State {
   sessionLog: boolean
   fuzzyModelMatch: boolean
 
+  // Model id -> context window token count overrides applied when caching models
+  contextWindowOverrides?: Record<string, number>
+
   // Rate limiting configuration
   rateLimitSeconds?: number
   lastRequestTimestamp?: number

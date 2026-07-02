@@ -23,6 +23,13 @@ export interface AnthropicMessagesPayload {
     budget_tokens?: number
   }
   service_tier?: "auto" | "standard_only"
+  output_config?: {
+    effort?: "low" | "medium" | "high" | "xhigh" | "max"
+    format?: {
+      type: "json_schema"
+      schema: Record<string, unknown>
+    }
+  }
 }
 
 export interface AnthropicTextBlock {

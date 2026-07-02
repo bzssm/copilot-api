@@ -31,6 +31,8 @@ interface ModelSupports {
   reasoning_effort?: Array<string>
   structured_outputs?: boolean
   adaptive_thinking?: boolean
+  max_thinking_budget?: number
+  min_thinking_budget?: number
 }
 
 interface ModelCapabilities {

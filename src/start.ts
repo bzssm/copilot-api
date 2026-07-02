@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFile } from "node:fs/promises"
+
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
@@ -27,6 +29,61 @@ interface RunServerOptions {
   proxyEnv: boolean
   sessionLog: boolean
   fuzzyModelMatch: boolean
+  overrideContextWindowPath?: string
+}
+
+// Applied when --override-context-window is passed as a bare flag (no path).
+// Fill in model id -> context window token count entries as needed.
+const DEFAULT_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
+  "claude-fable-5": 1_000_000,
+  "claude-opus-4.6": 1_000_000,
+  "claude-opus-4.7": 1_000_000,
+  "claude-opus-4.8": 1_000_000,
+  "claude-sonnet-4.6": 1_000_000,
+  "claude-sonnet-5": 1_000_000,
+  "gemini-3.1-pro-preview": 1_000_000,
+  "gemini-3.5-flash": 1_000_000,
+  "gpt-5.5": 1_000_000,
+}
+
+async function loadContextWindowOverrides(
+  path: string,
+): Promise<Record<string, number>> {
+  let raw: string
+  try {
+    raw = await readFile(path, "utf8")
+  } catch (error) {
+    throw new Error(
+      `Failed to read context window override file at "${path}": ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error) {
+    throw new Error(
+      `Failed to parse context window override file at "${path}" as JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      `Context window override file at "${path}" must be a JSON object mapping model id to a token count`,
+    )
+  }
+
+  const overrides: Record<string, number> = {}
+  for (const [modelId, value] of Object.entries(parsed)) {
+    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+      throw new Error(
+        `Context window override for "${modelId}" must be a positive integer, received: ${JSON.stringify(value)}`,
+      )
+    }
+    overrides[modelId] = value
+  }
+
+  return overrides
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -50,6 +107,16 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.showToken = options.showToken
   state.sessionLog = options.sessionLog
   state.fuzzyModelMatch = options.fuzzyModelMatch
+
+  if (options.overrideContextWindowPath !== undefined) {
+    state.contextWindowOverrides =
+      options.overrideContextWindowPath === "" ?
+        DEFAULT_CONTEXT_WINDOW_OVERRIDES
+        : await loadContextWindowOverrides(options.overrideContextWindowPath)
+    consola.info(
+      `Loaded ${Object.keys(state.contextWindowOverrides).length} context window override(s)`,
+    )
+  }
 
   await ensurePaths()
   await cacheVSCodeVersion()
@@ -198,6 +265,11 @@ export const start = defineCommand({
       description:
         "Enable fuzzy matching of requested model names to the closest available model",
     },
+    "override-context-window": {
+      type: "string",
+      description:
+        "Path to a JSON file mapping model id to a context window token count, used to override each model's max_context_window_tokens when caching models",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -218,6 +290,7 @@ export const start = defineCommand({
       proxyEnv: args["proxy-env"],
       sessionLog: args["session-log"],
       fuzzyModelMatch: args["fuzzy-model"],
+      overrideContextWindowPath: args["override-context-window"],
     })
   },
 })

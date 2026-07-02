@@ -118,11 +118,44 @@ async function handleNativeMessages(
     ...(anthropicPayload.service_tier != null && {
       service_tier: anthropicPayload.service_tier,
     }),
+    ...(anthropicPayload.output_config != null && {
+      output_config: anthropicPayload.output_config,
+    }),
   }
   const selectedModel = state.models?.data.find((m) => m.id === payload.model)
+
+  const reasoningEffort =
+    selectedModel?.capabilities.supports.reasoning_effort
+  const fallbackEffort =
+    reasoningEffort && reasoningEffort.length >= 2 ?
+      reasoningEffort[reasoningEffort.length - 2]
+    : undefined
+  const effort = payload.output_config?.effort ?? fallbackEffort
+  if (effort !== undefined) {
+    payload = {
+      ...payload,
+      output_config: {
+        ...payload.output_config,
+        effort: effort as NonNullable<
+          AnthropicMessagesPayload["output_config"]
+        >["effort"],
+      },
+    }
+  }
   if (payload.thinking) {
     if (selectedModel?.capabilities?.supports?.adaptive_thinking) {
-      payload = { ...payload, thinking: { type: "adaptive" } }
+      payload = { ...payload, thinking: { type: "adaptive" } } 
+      // Following is an ideal way to set the thinking budget, but it is commented out because it does not supported by copilot yet.
+      // copilot only supports adaptive thinking without budget settings. 
+      // payload = {
+      //   ...payload,
+      //   thinking: {
+      //     type: payload.thinking.type,
+      //     budget_tokens:
+      //       payload.thinking.budget_tokens
+      //       ?? selectedModel.capabilities.supports.max_thinking_budget,
+      //   },
+      // }
     } else {
       const { thinking: _, ...rest } = payload
       payload = rest as AnthropicMessagesPayload
@@ -176,7 +209,8 @@ async function handleNativeMessages(
         if (!rawEvent.data || rawEvent.data === "[DONE]") continue
 
         const event = JSON.parse(rawEvent.data) as {
-          type: string
+          type: string,
+          delta: any,
           usage?: {
             input_tokens?: number
             output_tokens?: number
