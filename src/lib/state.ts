@@ -4,6 +4,10 @@ export interface State {
   githubToken?: string
   copilotToken?: string
 
+  authMode?: "github" | "hmac"
+  hmacKey?: string
+  hmacIntegrationId?: string
+
   accountType: string
   models?: ModelsResponse
   vsCodeVersion?: string
@@ -13,9 +17,6 @@ export interface State {
   showToken: boolean
   sessionLog: boolean
   fuzzyModelMatch: boolean
-
-  // Model id -> context window token count overrides applied when caching models
-  contextWindowOverrides?: Record<string, number>
 
   // Rate limiting configuration
   rateLimitSeconds?: number

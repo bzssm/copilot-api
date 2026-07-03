@@ -8,10 +8,12 @@ import type {
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { hasValidAuth } from "~/lib/hmac"
 import { state } from "~/lib/state"
 
 export const createMessages = async (payload: AnthropicMessagesPayload) => {
-  if (!state.copilotToken) throw new Error("Copilot token not found")
+  if (!hasValidAuth(state))
+    throw new Error("No valid authentication (copilot token or hmac) found")
 
   const headers: Record<string, string> = {
     ...copilotHeaders(state),

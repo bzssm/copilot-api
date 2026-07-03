@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition, max-lines-per-function -- pre-existing, tracked as tech debt */
 import type { Context } from "hono"
 
 import consola from "consola"

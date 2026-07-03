@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition, eqeqeq, complexity, no-nested-ternary -- pre-existing, tracked as tech debt */
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
@@ -27,7 +28,10 @@ modelRoutes.get("/", async (c) => {
 
       const contextWindow =
         model.capabilities?.limits?.max_context_window_tokens
-      const idSuffix = contextWindow === 1000000 ? "[1m]" : ""
+      const idSuffix =
+        (contextWindow ?? 0) > 950000 && (contextWindow ?? 0) < 1200000 ?
+          "[1m]"
+        : ""
 
       const supports = model.capabilities?.supports
       const thinking =

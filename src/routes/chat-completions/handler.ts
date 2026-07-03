@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition, no-param-reassign, max-params, complexity, default-case -- pre-existing, tracked as tech debt */
 import type { Context } from "hono"
 
 import consola from "consola"

@@ -19,7 +19,7 @@ const usageByModel = new Map<string, ModelUsage>()
 // 启动时从文件加载
 try {
   const content = fs.readFileSync(USAGE_FILE)
-  const data = JSON.parse(content) as Record<string, ModelUsage>
+  const data = JSON.parse(content.toString()) as Record<string, ModelUsage>
   for (const [model, usage] of Object.entries(data)) {
     usageByModel.set(model, usage)
   }

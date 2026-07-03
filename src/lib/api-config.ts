@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto"
 
 import type { State } from "./state"
 
+import { generateRequestHmac } from "./hmac"
+
 export const standardHeaders = () => ({
   "content-type": "application/json",
   accept: "application/json",
@@ -11,7 +13,7 @@ const COPILOT_VERSION = "0.45.1"
 const EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`
 const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 
-const API_VERSION = "2025-04-01"
+const API_VERSION = "2026-06-01"
 
 export const copilotBaseUrl = (state: State) =>
   state.accountType === "individual" ?
@@ -19,7 +21,6 @@ export const copilotBaseUrl = (state: State) =>
   : `https://api.${state.accountType}.githubcopilot.com`
 export const copilotHeaders = (state: State, vision: boolean = false) => {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${state.copilotToken}`,
     "content-type": standardHeaders()["content-type"],
     "copilot-integration-id": "vscode-chat",
     "editor-version": `vscode/${state.vsCodeVersion}`,
@@ -29,6 +30,13 @@ export const copilotHeaders = (state: State, vision: boolean = false) => {
     "x-github-api-version": API_VERSION,
     "x-request-id": randomUUID(),
     "x-vscode-user-agent-library-version": "electron-fetch",
+  }
+
+  if (state.authMode === "hmac" && state.hmacKey && state.hmacIntegrationId) {
+    headers["copilot-integration-id"] = state.hmacIntegrationId
+    headers["Request-Hmac"] = generateRequestHmac(state.hmacKey)
+  } else {
+    headers.Authorization = `Bearer ${state.copilotToken}`
   }
 
   if (vision) headers["copilot-vision-request"] = "true"

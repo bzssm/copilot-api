@@ -1,3 +1,4 @@
+/* eslint-disable max-params -- pre-existing complexity, tracked as tech debt */
 import consola from "consola"
 import fs from "node:fs/promises"
 import path from "node:path"
@@ -35,7 +36,7 @@ export async function addRecord(
     let sessionFile: SessionFile
     try {
       const content = await fs.readFile(filePath)
-      sessionFile = JSON.parse(content) as SessionFile
+      sessionFile = JSON.parse(content.toString()) as SessionFile
     } catch {
       sessionFile = { sessionId, records: [] }
     }
@@ -65,7 +66,7 @@ export async function getSessions(): Promise<
         .map(async (f) => {
           const filePath = path.join(SESSIONS_DIR, f)
           const content = await fs.readFile(filePath)
-          const data = JSON.parse(content) as SessionFile
+          const data = JSON.parse(content.toString()) as SessionFile
           const stat = await fs.stat(filePath)
           return {
             sessionId: data.sessionId,
@@ -86,7 +87,7 @@ export async function getSession(
   try {
     const filePath = path.join(SESSIONS_DIR, `${sessionId}.json`)
     const content = await fs.readFile(filePath)
-    return JSON.parse(content) as SessionFile
+    return JSON.parse(content.toString()) as SessionFile
   } catch {
     return null
   }

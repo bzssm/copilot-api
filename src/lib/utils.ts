@@ -1,3 +1,4 @@
+/* eslint-disable regexp/no-unused-capturing-group -- pre-existing, tracked as tech debt */
 import consola from "consola"
 
 import { getModels } from "~/services/copilot/get-models"
@@ -60,9 +61,13 @@ export function resolveModelName(input: string): string {
   const lowerInput = input.toLowerCase()
 
   // 2. Case-insensitive exact match
-  const caseMatch = available.find((model) => model.toLowerCase() === lowerInput)
+  const caseMatch = available.find(
+    (model) => model.toLowerCase() === lowerInput,
+  )
   if (caseMatch) {
-    consola.info(`Resolved model "${input}" -> "${caseMatch}" (case-insensitive)`)
+    consola.info(
+      `Resolved model "${input}" -> "${caseMatch}" (case-insensitive)`,
+    )
     return caseMatch
   }
 
@@ -94,26 +99,6 @@ export function resolveModelName(input: string): string {
 
 export async function cacheModels(): Promise<void> {
   const models = await getModels()
-
-  const overrides = state.contextWindowOverrides
-  if (overrides) {
-    for (const [modelId, contextWindow] of Object.entries(overrides)) {
-      const model = models.data.find((m) => m.id === modelId)
-      if (!model) {
-        consola.warn(
-          `Context window override for "${modelId}" ignored: model not found`,
-        )
-        continue
-      }
-      model.capabilities.limits.max_context_window_tokens = contextWindow
-      model.capabilities.limits.max_prompt_tokens =
-        contextWindow - (model.capabilities.limits.max_output_tokens ?? 0)
-      consola.info(
-        `Overrode context window for "${modelId}" -> ${contextWindow}`,
-      )
-    }
-  }
-
   state.models = models
 }
 

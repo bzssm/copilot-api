@@ -3,12 +3,14 @@ import { events } from "fetch-event-stream"
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { hasValidAuth } from "~/lib/hmac"
 import { state } from "~/lib/state"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
 ) => {
-  if (!state.copilotToken) throw new Error("Copilot token not found")
+  if (!hasValidAuth(state))
+    throw new Error("No valid authentication (copilot token or hmac) found")
 
   const enableVision = payload.messages.some(
     (x) =>
