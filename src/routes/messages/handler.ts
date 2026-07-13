@@ -622,20 +622,22 @@ function translateResponsesStreamEventToAnthropic(
       const item = event.item as
         | { type: string; arguments?: string }
         | undefined
-      if (item?.type === "function_call" && item.arguments) {
+      if (item?.type === "function_call") {
+        if (item.arguments) {
+          anthropicEvents.push({
+            type: "content_block_delta",
+            index: (event.output_index as number) ?? 0,
+            delta: {
+              type: "input_json_delta",
+              partial_json: item.arguments,
+            },
+          })
+        }
         anthropicEvents.push({
-          type: "content_block_delta",
+          type: "content_block_stop",
           index: (event.output_index as number) ?? 0,
-          delta: {
-            type: "input_json_delta",
-            partial_json: item.arguments,
-          },
         })
       }
-      anthropicEvents.push({
-        type: "content_block_stop",
-        index: (event.output_index as number) ?? 0,
-      })
       break
     }
     case "response.completed": {
