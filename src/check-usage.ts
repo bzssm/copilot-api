@@ -15,6 +15,9 @@ export const checkUsage = defineCommand({
   },
   async run() {
     await ensurePaths()
+    consola.info(
+      "check-usage only supports GitHub token authentication; Copilot quota is a GitHub account-level concept and cannot be queried with HMAC.",
+    )
     await setupGitHubToken()
     try {
       const usage = await getCopilotUsage()

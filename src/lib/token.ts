@@ -149,7 +149,7 @@ function applyHmac(credential: HmacCredential): void {
   state.authMode = "hmac"
   state.hmacIntegrationId = credential.integrationId
   state.hmacKey = credential.key
-  consola.info("Using HMAC authentication")
+  consola.info(`Using HMAC authentication: ${credential.integrationId}`)
 }
 
 async function createHmacCredential(): Promise<HmacCredential> {
