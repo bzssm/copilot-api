@@ -1,0 +1,40 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Read package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check if version already published
+        run: |
+          if npm view "@bzssm/copilot-api@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
+            echo "::error::@bzssm/copilot-api@${{ steps.pkg.outputs.version }} is already published on npm."
+            exit 1
+          fi
+          echo "Version ${{ steps.pkg.outputs.version }} is not yet published. Proceeding."
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build
+        run: bun run build
+
+      - name: Configure npm auth
+        run: echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > .npmrc
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
