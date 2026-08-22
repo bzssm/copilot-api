@@ -41,24 +41,30 @@ function levenshtein(a: string, b: string): number {
 }
 
 const FUZZY_MODEL_THRESHOLD = 0.2
+const ONE_MILLION_CONTEXT_SUFFIX = "[1m]"
 
 /**
  * Resolves a requested model name to an available model id.
  *
- * Order: exact match -> case-insensitive exact match -> (opt-in) Levenshtein
- * fuzzy match. Fuzzy matching only runs when `state.fuzzyModelMatch` is enabled
- * and the closest candidate is within `FUZZY_MODEL_THRESHOLD` relative distance.
- * When nothing matches confidently the original input is returned unchanged so
- * the upstream API decides how to handle it.
+ * Order: strip the public context suffix -> exact match -> case-insensitive
+ * exact match -> (opt-in) Levenshtein fuzzy match. Fuzzy matching only runs
+ * when `state.fuzzyModelMatch` is enabled and the closest candidate is within
+ * `FUZZY_MODEL_THRESHOLD` relative distance. When nothing matches confidently
+ * the normalized input is returned unchanged so the upstream API decides how
+ * to handle it.
  */
 export function resolveModelName(input: string): string {
+  const normalizedInput =
+    input.endsWith(ONE_MILLION_CONTEXT_SUFFIX) ?
+      input.slice(0, -ONE_MILLION_CONTEXT_SUFFIX.length)
+    : input
   const available = state.models?.data.map((model) => model.id) ?? []
-  if (available.length === 0) return input
+  if (available.length === 0) return normalizedInput
 
   // 1. Exact match
-  if (available.includes(input)) return input
+  if (available.includes(normalizedInput)) return normalizedInput
 
-  const lowerInput = input.toLowerCase()
+  const lowerInput = normalizedInput.toLowerCase()
 
   // 2. Case-insensitive exact match
   const caseMatch = available.find(
@@ -72,9 +78,9 @@ export function resolveModelName(input: string): string {
   }
 
   // 3. Levenshtein fuzzy match (opt-in via --fuzzy-model)
-  if (!state.fuzzyModelMatch) return input
+  if (!state.fuzzyModelMatch) return normalizedInput
 
-  let bestMatch = input
+  let bestMatch = normalizedInput
   let bestDistance = Infinity
   for (const model of available) {
     const distance = levenshtein(lowerInput, model.toLowerCase())
@@ -84,7 +90,7 @@ export function resolveModelName(input: string): string {
     }
   }
 
-  const maxLen = Math.max(input.length, bestMatch.length)
+  const maxLen = Math.max(normalizedInput.length, bestMatch.length)
   const ratio = maxLen > 0 ? bestDistance / maxLen : Infinity
   if (ratio < FUZZY_MODEL_THRESHOLD) {
     consola.info(
@@ -94,7 +100,7 @@ export function resolveModelName(input: string): string {
   }
 
   consola.warn(`No close model match for "${input}", passing through unchanged`)
-  return input
+  return normalizedInput
 }
 
 export async function cacheModels(): Promise<void> {

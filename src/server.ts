@@ -23,6 +23,8 @@ server.use(cors())
 
 server.get("/", (c) => c.text("Server running"))
 
+server.get("/api/hello", (c) => c.json({ message: "hello" }))
+
 server.get("/dashboard", async (c) => {
   const htmlPath = path.resolve(__dirname, "..", "pages", "index.html")
   const html = await fs.readFile(htmlPath, "utf8")
