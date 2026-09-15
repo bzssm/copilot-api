@@ -9,10 +9,16 @@ import { selectEndpoint } from "~/lib/endpoint-selector"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
-import { trackUsage } from "~/lib/usage-tracker"
+import {
+  createRequestUsageTracker,
+  getChatCompletionUsage,
+  getResponsesUsage,
+  trackUsage,
+} from "~/lib/usage-tracker"
 import { isGpt5OrAbove, isNullish, resolveModelName } from "~/lib/utils"
 import {
   createChatCompletions,
+  type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
@@ -112,32 +118,26 @@ async function handleDirect(c: Context, payload: ChatCompletionsPayload) {
 
   if (isNonStreaming(response)) {
     consola.debug("Non-streaming response:", JSON.stringify(response))
-    trackUsage(payload.model, {
-      input_tokens: response.usage?.prompt_tokens ?? 0,
-      output_tokens: response.usage?.completion_tokens ?? 0,
-      cache_read_input_tokens: 0,
-    })
+    trackUsage(payload.model, getChatCompletionUsage(response.usage))
     return c.json(response)
   }
 
   consola.debug("Streaming response")
   return streamSSE(c, async (stream) => {
-    for await (const chunk of response) {
-      consola.debug("Streaming chunk:", JSON.stringify(chunk))
-      await stream.writeSSE(chunk as SSEMessage)
-
-      if (chunk.data && chunk.data !== "[DONE]") {
-        const parsed = JSON.parse(chunk.data) as {
-          usage?: { prompt_tokens?: number; completion_tokens?: number }
+    const requestUsage = createRequestUsageTracker(payload.model)
+    try {
+      for await (const chunk of response) {
+        consola.debug("Streaming chunk:", JSON.stringify(chunk))
+        if (chunk.data && chunk.data !== "[DONE]") {
+          const parsed = JSON.parse(chunk.data) as ChatCompletionChunk
+          if (parsed.usage) {
+            requestUsage.update(getChatCompletionUsage(parsed.usage))
+          }
         }
-        if (parsed.usage) {
-          trackUsage(payload.model, {
-            input_tokens: parsed.usage.prompt_tokens ?? 0,
-            output_tokens: parsed.usage.completion_tokens ?? 0,
-            cache_read_input_tokens: 0,
-          })
-        }
+        await stream.writeSSE(chunk as SSEMessage)
       }
+    } finally {
+      requestUsage.flush()
     }
   })
 }
@@ -154,11 +154,7 @@ async function handleViaResponses(c: Context, payload: ChatCompletionsPayload) {
   if (isResponsesResponse(response)) {
     consola.debug("Non-streaming responses response")
     const chatResponse = translateResponsesResponseToChatCompletions(response)
-    trackUsage(payload.model, {
-      input_tokens: response.usage?.input_tokens ?? 0,
-      output_tokens: response.usage?.output_tokens ?? 0,
-      cache_read_input_tokens: 0,
-    })
+    trackUsage(payload.model, getResponsesUsage(response.usage))
     return c.json(chatResponse)
   }
 
@@ -167,36 +163,34 @@ async function handleViaResponses(c: Context, payload: ChatCompletionsPayload) {
   return streamSSE(c, async (stream) => {
     const responseId = `chatcmpl-${Date.now()}`
     let sentRole = false
+    const requestUsage = createRequestUsageTracker(payload.model)
 
-    for await (const rawEvent of response) {
-      if (!rawEvent.data) continue
+    try {
+      for await (const rawEvent of response) {
+        if (!rawEvent.data || rawEvent.data === "[DONE]") continue
 
-      const event = JSON.parse(rawEvent.data) as Record<string, unknown>
-      const chunks = translateResponsesStreamToChatCompletionsChunks(
-        event,
-        responseId,
-        payload.model,
-        sentRole,
-      )
-
-      for (const chunk of chunks.data) {
-        await stream.writeSSE({
-          data: JSON.stringify(chunk),
-        })
-      }
-
-      if (chunks.sentRole) sentRole = true
-
-      if (event.type === "response.completed") {
+        const event = JSON.parse(rawEvent.data) as Record<string, unknown>
         const resp = event.response as ResponsesResponse | undefined
         if (resp?.usage) {
-          trackUsage(payload.model, {
-            input_tokens: resp.usage.input_tokens ?? 0,
-            output_tokens: resp.usage.output_tokens ?? 0,
-            cache_read_input_tokens: 0,
+          requestUsage.update(getResponsesUsage(resp.usage))
+        }
+        const chunks = translateResponsesStreamToChatCompletionsChunks(
+          event,
+          responseId,
+          payload.model,
+          sentRole,
+        )
+
+        for (const chunk of chunks.data) {
+          await stream.writeSSE({
+            data: JSON.stringify(chunk),
           })
         }
+
+        if (chunks.sentRole) sentRole = true
       }
+    } finally {
+      requestUsage.flush()
     }
 
     await stream.writeSSE({ data: "[DONE]" })

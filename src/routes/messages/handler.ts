@@ -1,4 +1,4 @@
-/* eslint-disable eqeqeq, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-explicit-any, max-lines-per-function, complexity, max-depth, default-case -- pre-existing, tracked as tech debt */
+/* eslint-disable eqeqeq, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-explicit-any, max-lines-per-function, complexity, default-case -- pre-existing, tracked as tech debt */
 import type { Context } from "hono"
 
 import consola from "consola"
@@ -10,7 +10,13 @@ import { checkRateLimit } from "~/lib/rate-limit"
 import { addRecord } from "~/lib/session-store"
 import { state } from "~/lib/state"
 import { KEEPALIVE_PING, withKeepalive } from "~/lib/stream-keepalive"
-import { trackUsage } from "~/lib/usage-tracker"
+import {
+  createRequestUsageTracker,
+  getChatCompletionUsage,
+  getResponsesUsage,
+  trackUsage,
+  type UsageData,
+} from "~/lib/usage-tracker"
 import { isGpt5OrAbove, resolveModelName } from "~/lib/utils"
 import {
   createChatCompletions,
@@ -174,6 +180,8 @@ async function handleNativeMessages(
       trackUsage(anthropicPayload.model, {
         input_tokens: response.usage.input_tokens,
         output_tokens: response.usage.output_tokens,
+        cache_creation_input_tokens:
+          response.usage.cache_creation_input_tokens ?? 0,
         cache_read_input_tokens: response.usage.cache_read_input_tokens ?? 0,
       })
 
@@ -198,6 +206,7 @@ async function handleNativeMessages(
 
   return streamSSE(c, async (stream) => {
     const collectedEvents: Array<unknown> = []
+    const requestUsage = createRequestUsageTracker(anthropicPayload.model)
 
     try {
       for await (const rawEvent of withKeepalive(upstream)) {
@@ -214,23 +223,18 @@ async function handleNativeMessages(
         const event = JSON.parse(rawEvent.data) as {
           type: string
           delta: any
-          usage?: {
-            input_tokens?: number
-            output_tokens?: number
-            cache_read_input_tokens?: number
-          }
+          message?: { usage?: Partial<UsageData> }
+          usage?: Partial<UsageData>
         }
 
         if (state.sessionLog && sessionId) {
           collectedEvents.push(event)
         }
 
-        if (event.type === "message_delta" && event.usage) {
-          trackUsage(anthropicPayload.model, {
-            input_tokens: event.usage.input_tokens ?? 0,
-            output_tokens: event.usage.output_tokens ?? 0,
-            cache_read_input_tokens: event.usage.cache_read_input_tokens ?? 0,
-          })
+        if (event.type === "message_start") {
+          requestUsage.update(event.message?.usage)
+        } else if (event.type === "message_delta") {
+          requestUsage.update(event.usage)
         }
 
         await stream.writeSSE({
@@ -254,6 +258,7 @@ async function handleNativeMessages(
         }),
       })
     } finally {
+      requestUsage.flush()
       if (state.sessionLog && sessionId) {
         await addRecord(
           sessionId,
@@ -290,12 +295,7 @@ async function handleViaTranslation(
       JSON.stringify(anthropicResponse),
     )
 
-    trackUsage(anthropicPayload.model, {
-      input_tokens: anthropicResponse.usage.input_tokens,
-      output_tokens: anthropicResponse.usage.output_tokens,
-      cache_read_input_tokens:
-        anthropicResponse.usage.cache_read_input_tokens ?? 0,
-    })
+    trackUsage(anthropicPayload.model, getChatCompletionUsage(response.usage))
 
     if (state.sessionLog && sessionId) {
       await addRecord(
@@ -319,6 +319,7 @@ async function handleViaTranslation(
     }
 
     const collectedEvents: Array<unknown> = []
+    const requestUsage = createRequestUsageTracker(anthropicPayload.model)
 
     try {
       for await (const rawEvent of withKeepalive(response)) {
@@ -340,30 +341,15 @@ async function handleViaTranslation(
         }
 
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        if (chunk.usage) {
+          requestUsage.update(getChatCompletionUsage(chunk.usage))
+        }
         const events = translateChunkToAnthropicEvents(chunk, streamState)
 
         for (const event of events) {
           consola.debug("Translated Anthropic event:", JSON.stringify(event))
           if (state.sessionLog && sessionId) {
             collectedEvents.push(event)
-          }
-
-          if (event.type === "message_delta") {
-            const msgDelta = event as {
-              usage?: {
-                input_tokens?: number
-                output_tokens?: number
-                cache_read_input_tokens?: number
-              }
-            }
-            if (msgDelta.usage) {
-              trackUsage(anthropicPayload.model, {
-                input_tokens: msgDelta.usage.input_tokens ?? 0,
-                output_tokens: msgDelta.usage.output_tokens ?? 0,
-                cache_read_input_tokens:
-                  msgDelta.usage.cache_read_input_tokens ?? 0,
-              })
-            }
           }
 
           await stream.writeSSE({
@@ -382,6 +368,7 @@ async function handleViaTranslation(
       }
       throw error
     } finally {
+      requestUsage.flush()
       if (state.sessionLog && sessionId) {
         await addRecord(
           sessionId,
@@ -423,12 +410,7 @@ async function handleViaResponses(
     consola.debug("Non-streaming responses response")
     const anthropicResponse = translateResponsesResponseToAnthropic(response)
 
-    trackUsage(anthropicPayload.model, {
-      input_tokens: anthropicResponse.usage.input_tokens,
-      output_tokens: anthropicResponse.usage.output_tokens,
-      cache_read_input_tokens:
-        anthropicResponse.usage.cache_read_input_tokens ?? 0,
-    })
+    trackUsage(anthropicPayload.model, getResponsesUsage(response.usage))
 
     if (state.sessionLog && sessionId) {
       await addRecord(
@@ -447,6 +429,7 @@ async function handleViaResponses(
   return streamSSE(c, async (stream) => {
     const collectedEvents: Array<unknown> = []
     let messageStartSent = false
+    const requestUsage = createRequestUsageTracker(anthropicPayload.model)
 
     try {
       for await (const rawEvent of withKeepalive(response)) {
@@ -475,6 +458,10 @@ async function handleViaResponses(
           part?: { type: string; text?: string }
         }
 
+        if (event.response?.usage) {
+          requestUsage.update(getResponsesUsage(event.response.usage))
+        }
+
         // Translate Responses streaming events to Anthropic streaming events
         const anthropicEvents = translateResponsesStreamEventToAnthropic(
           event,
@@ -485,24 +472,6 @@ async function handleViaResponses(
         for (const anthropicEvent of anthropicEvents.events) {
           if (state.sessionLog && sessionId) {
             collectedEvents.push(anthropicEvent)
-          }
-
-          if (anthropicEvent.type === "message_delta") {
-            const msgDelta = anthropicEvent as {
-              usage?: {
-                input_tokens?: number
-                output_tokens?: number
-                cache_read_input_tokens?: number
-              }
-            }
-            if (msgDelta.usage) {
-              trackUsage(anthropicPayload.model, {
-                input_tokens: msgDelta.usage.input_tokens ?? 0,
-                output_tokens: msgDelta.usage.output_tokens ?? 0,
-                cache_read_input_tokens:
-                  msgDelta.usage.cache_read_input_tokens ?? 0,
-              })
-            }
           }
 
           await stream.writeSSE({
@@ -525,6 +494,7 @@ async function handleViaResponses(
       }
       throw error
     } finally {
+      requestUsage.flush()
       if (state.sessionLog && sessionId) {
         await addRecord(
           sessionId,

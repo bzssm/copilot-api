@@ -9,7 +9,13 @@ import type { AnthropicResponse } from "~/routes/messages/anthropic-types"
 import { selectEndpoint } from "~/lib/endpoint-selector"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { trackUsage } from "~/lib/usage-tracker"
+import {
+  createRequestUsageTracker,
+  getChatCompletionUsage,
+  getResponsesUsage,
+  trackUsage,
+  type UsageData,
+} from "~/lib/usage-tracker"
 import { isGpt5OrAbove, resolveModelName } from "~/lib/utils"
 import {
   translateResponsesPayloadToChatCompletions,
@@ -69,33 +75,28 @@ async function handleDirect(c: Context, payload: ResponsesPayload) {
   const response = await createResponses(cleanPayload)
 
   if (isResponsesResponse(response)) {
-    trackUsage(cleanPayload.model, {
-      input_tokens: response.usage?.input_tokens ?? 0,
-      output_tokens: response.usage?.output_tokens ?? 0,
-      cache_read_input_tokens: 0,
-    })
+    trackUsage(cleanPayload.model, getResponsesUsage(response.usage))
     return c.json(response)
   }
 
   return streamSSE(c, async (stream) => {
-    for await (const rawEvent of response) {
-      if (!rawEvent.data || rawEvent.data === "[DONE]") continue
-      await stream.writeSSE({
-        event: rawEvent.event ?? undefined,
-        data: rawEvent.data,
-      })
-
-      const parsed = JSON.parse(rawEvent.data) as {
-        type?: string
-        response?: { usage?: { input_tokens?: number; output_tokens?: number } }
-      }
-      if (parsed.type === "response.completed" && parsed.response?.usage) {
-        trackUsage(cleanPayload.model, {
-          input_tokens: parsed.response.usage.input_tokens ?? 0,
-          output_tokens: parsed.response.usage.output_tokens ?? 0,
-          cache_read_input_tokens: 0,
+    const requestUsage = createRequestUsageTracker(cleanPayload.model)
+    try {
+      for await (const rawEvent of response) {
+        if (!rawEvent.data || rawEvent.data === "[DONE]") continue
+        const parsed = JSON.parse(rawEvent.data) as {
+          response?: ResponsesResponse
+        }
+        if (parsed.response?.usage) {
+          requestUsage.update(getResponsesUsage(parsed.response.usage))
+        }
+        await stream.writeSSE({
+          event: rawEvent.event ?? undefined,
+          data: rawEvent.data,
         })
       }
+    } finally {
+      requestUsage.flush()
     }
   })
 }
@@ -109,11 +110,7 @@ async function handleViaChatCompletions(c: Context, payload: ResponsesPayload) {
   if (isNonStreamingChatCompletion(response)) {
     const responsesResponse =
       translateChatCompletionResponseToResponses(response)
-    trackUsage(payload.model, {
-      input_tokens: response.usage?.prompt_tokens ?? 0,
-      output_tokens: response.usage?.completion_tokens ?? 0,
-      cache_read_input_tokens: 0,
-    })
+    trackUsage(payload.model, getChatCompletionUsage(response.usage))
     return c.json(responsesResponse)
   }
 
@@ -121,6 +118,7 @@ async function handleViaChatCompletions(c: Context, payload: ResponsesPayload) {
   return streamSSE(c, async (stream) => {
     const responseId = `resp_${Date.now()}`
     let outputText = ""
+    const requestUsage = createRequestUsageTracker(payload.model)
 
     // Send response.created
     await stream.writeSSE({
@@ -155,86 +153,85 @@ async function handleViaChatCompletions(c: Context, payload: ResponsesPayload) {
       }),
     })
 
-    for await (const rawEvent of response) {
-      if (rawEvent.data === "[DONE]") break
-      if (!rawEvent.data || rawEvent.data === "[DONE]") continue
+    try {
+      for await (const rawEvent of response) {
+        if (rawEvent.data === "[DONE]") break
+        if (!rawEvent.data) continue
 
-      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      const delta = chunk.choices?.[0]?.delta
-      const finishReason = chunk.choices?.[0]?.finish_reason
-
-      if (delta?.content) {
-        outputText += delta.content
-        await stream.writeSSE({
-          event: "response.output_text.delta",
-          data: JSON.stringify({
-            type: "response.output_text.delta",
-            output_index: 0,
-            content_index: 0,
-            delta: delta.content,
-          }),
-        })
-      }
-
-      if (finishReason) {
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
         if (chunk.usage) {
-          trackUsage(payload.model, {
-            input_tokens: chunk.usage.prompt_tokens ?? 0,
-            output_tokens: chunk.usage.completion_tokens ?? 0,
-            cache_read_input_tokens: 0,
+          requestUsage.update(getChatCompletionUsage(chunk.usage))
+        }
+        const delta = chunk.choices?.[0]?.delta
+        const finishReason = chunk.choices?.[0]?.finish_reason
+
+        if (delta?.content) {
+          outputText += delta.content
+          await stream.writeSSE({
+            event: "response.output_text.delta",
+            data: JSON.stringify({
+              type: "response.output_text.delta",
+              output_index: 0,
+              content_index: 0,
+              delta: delta.content,
+            }),
           })
         }
 
-        await stream.writeSSE({
-          event: "response.content_part.done",
-          data: JSON.stringify({
-            type: "response.content_part.done",
-            output_index: 0,
-            content_index: 0,
-            part: { type: "output_text", text: outputText },
-          }),
-        })
+        if (finishReason) {
+          await stream.writeSSE({
+            event: "response.content_part.done",
+            data: JSON.stringify({
+              type: "response.content_part.done",
+              output_index: 0,
+              content_index: 0,
+              part: { type: "output_text", text: outputText },
+            }),
+          })
 
-        await stream.writeSSE({
-          event: "response.output_item.done",
-          data: JSON.stringify({
-            type: "response.output_item.done",
-            output_index: 0,
-            item: {
-              type: "message",
-              role: "assistant",
-              content: [{ type: "output_text", text: outputText }],
-            },
-          }),
-        })
+          await stream.writeSSE({
+            event: "response.output_item.done",
+            data: JSON.stringify({
+              type: "response.output_item.done",
+              output_index: 0,
+              item: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: outputText }],
+              },
+            }),
+          })
 
-        await stream.writeSSE({
-          event: "response.completed",
-          data: JSON.stringify({
-            type: "response.completed",
-            response: {
-              id: responseId,
-              status: "completed",
-              model: payload.model,
-              output: [
-                {
-                  type: "message",
-                  role: "assistant",
-                  content: [{ type: "output_text", text: outputText }],
-                },
-              ],
-              usage:
-                chunk.usage ?
+          await stream.writeSSE({
+            event: "response.completed",
+            data: JSON.stringify({
+              type: "response.completed",
+              response: {
+                id: responseId,
+                status: "completed",
+                model: payload.model,
+                output: [
                   {
-                    input_tokens: chunk.usage.prompt_tokens,
-                    output_tokens: chunk.usage.completion_tokens,
-                    total_tokens: chunk.usage.total_tokens,
-                  }
-                : undefined,
-            },
-          }),
-        })
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: outputText }],
+                  },
+                ],
+                usage:
+                  chunk.usage ?
+                    {
+                      input_tokens: chunk.usage.prompt_tokens,
+                      output_tokens: chunk.usage.completion_tokens,
+                      total_tokens: chunk.usage.total_tokens,
+                    }
+                  : undefined,
+              },
+            }),
+          })
+        }
       }
+    } finally {
+      requestUsage.flush()
     }
   })
 }
@@ -253,7 +250,9 @@ async function handleViaMessages(c: Context, payload: ResponsesPayload) {
     trackUsage(payload.model, {
       input_tokens: response.usage.input_tokens ?? 0,
       output_tokens: response.usage.output_tokens ?? 0,
-      cache_read_input_tokens: 0,
+      cache_creation_input_tokens:
+        response.usage.cache_creation_input_tokens ?? 0,
+      cache_read_input_tokens: response.usage.cache_read_input_tokens ?? 0,
     })
     return c.json(responsesResponse)
   }
@@ -263,114 +262,118 @@ async function handleViaMessages(c: Context, payload: ResponsesPayload) {
     const responseId = `resp_${Date.now()}`
     let outputText = ""
     let createdSent = false
+    const requestUsage = createRequestUsageTracker(payload.model)
 
-    for await (const rawEvent of response) {
-      if (!rawEvent.data || rawEvent.data === "[DONE]") continue
-      const event = JSON.parse(rawEvent.data) as {
-        type: string
-        delta?: { type?: string; text?: string; stop_reason?: string }
-        usage?: { input_tokens?: number; output_tokens?: number }
-      }
+    try {
+      for await (const rawEvent of response) {
+        if (!rawEvent.data || rawEvent.data === "[DONE]") continue
+        const event = JSON.parse(rawEvent.data) as {
+          type: string
+          delta?: { type?: string; text?: string; stop_reason?: string }
+          message?: { usage?: Partial<UsageData> }
+          usage?: Partial<UsageData>
+        }
 
-      if (!createdSent) {
-        await stream.writeSSE({
-          event: "response.created",
-          data: JSON.stringify({
-            type: "response.created",
-            response: {
-              id: responseId,
-              status: "in_progress",
-              model: payload.model,
-              output: [],
-            },
-          }),
-        })
-        await stream.writeSSE({
-          event: "response.output_item.added",
-          data: JSON.stringify({
-            type: "response.output_item.added",
-            output_index: 0,
-            item: { type: "message", role: "assistant", content: [] },
-          }),
-        })
-        await stream.writeSSE({
-          event: "response.content_part.added",
-          data: JSON.stringify({
-            type: "response.content_part.added",
-            output_index: 0,
-            content_index: 0,
-            part: { type: "output_text", text: "" },
-          }),
-        })
-        createdSent = true
-      }
+        if (event.type === "message_start") {
+          requestUsage.update(event.message?.usage)
+        } else if (event.type === "message_delta") {
+          requestUsage.update(event.usage)
+        }
 
-      if (
-        event.type === "content_block_delta"
-        && event.delta?.type === "text_delta"
-        && event.delta.text
-      ) {
-        outputText += event.delta.text
-        await stream.writeSSE({
-          event: "response.output_text.delta",
-          data: JSON.stringify({
-            type: "response.output_text.delta",
-            output_index: 0,
-            content_index: 0,
-            delta: event.delta.text,
-          }),
-        })
-      }
+        if (!createdSent) {
+          await stream.writeSSE({
+            event: "response.created",
+            data: JSON.stringify({
+              type: "response.created",
+              response: {
+                id: responseId,
+                status: "in_progress",
+                model: payload.model,
+                output: [],
+              },
+            }),
+          })
+          await stream.writeSSE({
+            event: "response.output_item.added",
+            data: JSON.stringify({
+              type: "response.output_item.added",
+              output_index: 0,
+              item: { type: "message", role: "assistant", content: [] },
+            }),
+          })
+          await stream.writeSSE({
+            event: "response.content_part.added",
+            data: JSON.stringify({
+              type: "response.content_part.added",
+              output_index: 0,
+              content_index: 0,
+              part: { type: "output_text", text: "" },
+            }),
+          })
+          createdSent = true
+        }
 
-      if (event.type === "message_delta" && event.usage) {
-        trackUsage(payload.model, {
-          input_tokens: event.usage.input_tokens ?? 0,
-          output_tokens: event.usage.output_tokens ?? 0,
-          cache_read_input_tokens: 0,
-        })
-      }
+        if (
+          event.type === "content_block_delta"
+          && event.delta?.type === "text_delta"
+          && event.delta.text
+        ) {
+          outputText += event.delta.text
+          await stream.writeSSE({
+            event: "response.output_text.delta",
+            data: JSON.stringify({
+              type: "response.output_text.delta",
+              output_index: 0,
+              content_index: 0,
+              delta: event.delta.text,
+            }),
+          })
+        }
 
-      if (event.type === "message_stop") {
-        await stream.writeSSE({
-          event: "response.content_part.done",
-          data: JSON.stringify({
-            type: "response.content_part.done",
-            output_index: 0,
-            content_index: 0,
-            part: { type: "output_text", text: outputText },
-          }),
-        })
-        await stream.writeSSE({
-          event: "response.output_item.done",
-          data: JSON.stringify({
-            type: "response.output_item.done",
-            output_index: 0,
-            item: {
-              type: "message",
-              role: "assistant",
-              content: [{ type: "output_text", text: outputText }],
-            },
-          }),
-        })
-        await stream.writeSSE({
-          event: "response.completed",
-          data: JSON.stringify({
-            type: "response.completed",
-            response: {
-              id: responseId,
-              status: "completed",
-              model: payload.model,
-              output: [
-                {
-                  type: "message",
-                  role: "assistant",
-                  content: [{ type: "output_text", text: outputText }],
-                },
-              ],
-            },
-          }),
-        })
+        if (event.type === "message_stop") {
+          await stream.writeSSE({
+            event: "response.content_part.done",
+            data: JSON.stringify({
+              type: "response.content_part.done",
+              output_index: 0,
+              content_index: 0,
+              part: { type: "output_text", text: outputText },
+            }),
+          })
+          await stream.writeSSE({
+            event: "response.output_item.done",
+            data: JSON.stringify({
+              type: "response.output_item.done",
+              output_index: 0,
+              item: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: outputText }],
+              },
+            }),
+          })
+          await stream.writeSSE({
+            event: "response.completed",
+            data: JSON.stringify({
+              type: "response.completed",
+              response: {
+                id: responseId,
+                status: "completed",
+                model: payload.model,
+                output: [
+                  {
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: outputText }],
+                  },
+                ],
+              },
+            }),
+          })
+        }
       }
+    } finally {
+      requestUsage.flush()
     }
   })
 }

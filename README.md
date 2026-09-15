@@ -280,6 +280,19 @@ The dashboard provides a user-friendly interface to view your Copilot usage data
 - **URL-based Configuration**: You can also specify the API endpoint directly in the URL using a query parameter. This is useful for bookmarks or sharing links. For example:
   `https://ericc-ch.github.io/copilot-api?endpoint=http://your-api-server/usage`
 
+### Token Accounting
+
+The local `/dashboard` displays cumulative per-model token usage from `/token-usage`, separately from GitHub account quotas:
+
+- **Regular Input** (`input_tokens`): Input that was neither read from nor written to the cache.
+- **Cache Write** (`cache_creation_input_tokens`): Input processed and written to the cache on this request, including newly cached system prompts and messages.
+- **Cache Read** (`cache_read_input_tokens`): Input reused from the cache.
+- **Total Input**: The sum of Regular Input, Cache Write, and Cache Read.
+
+OpenAI usage is normalized so cached input is not counted twice. Streaming usage snapshots are merged and recorded once per request, including input reported only in the initial event.
+
+Existing cumulative data is preserved. Older statistics did not store cache writes: their Cache Write counter starts at zero when this field is introduced and only includes subsequently recorded writes. Historical Total Input values therefore remain incomplete; missing cache-write usage cannot be reconstructed from the existing cumulative counters. No automatic backfill is performed.
+
 ## Using with Claude Code
 
 This proxy can be used to power [Claude Code](https://docs.anthropic.com/en/claude-code), an experimental conversational AI assistant for developers from Anthropic.
