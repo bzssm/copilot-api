@@ -705,7 +705,6 @@
           const parts = [];
           parts.push(`total in: ${getTotalInputTokens(usage).toLocaleString()}`);
           if (usage.output_tokens != null) parts.push(`out: ${usage.output_tokens.toLocaleString()}`);
-          if (usage.cache_creation_input_tokens) parts.push(`cache write: ${usage.cache_creation_input_tokens.toLocaleString()}`);
           if (usage.cache_read_input_tokens) parts.push(`cache read: ${usage.cache_read_input_tokens.toLocaleString()}`);
           return `<span class="inline-flex flex-wrap gap-x-3 gap-y-1 text-xs font-mono px-2 py-0.5" style="background-color: var(--color-bg-light-1); color: var(--color-orange-accent);">${parts.map(part => `<span class="whitespace-nowrap">${part}</span>`).join('')}</span>`;
         }
@@ -795,13 +794,12 @@
                 </button>
               </div>
               ${(() => {
-                let totalIn = 0, totalOut = 0, totalWrite = 0, totalCache = 0;
+                let totalIn = 0, totalOut = 0, totalCache = 0;
                 data.records.forEach(r => {
                   const u = extractUsageFromResponse(r.response);
                   if (u) {
                     totalIn += getTotalInputTokens(u);
                     totalOut += u.output_tokens || 0;
-                    totalWrite += u.cache_creation_input_tokens || 0;
                     totalCache += u.cache_read_input_tokens || 0;
                   }
                 });
@@ -809,7 +807,6 @@
                   <span class="text-sm font-bold" style="color: var(--color-fg-lightest);">Session Total</span>
                   <span class="text-xs font-mono" style="color: var(--color-orange-accent);">total in: ${totalIn.toLocaleString()}</span>
                   <span class="text-xs font-mono" style="color: var(--color-orange-accent);">out: ${totalOut.toLocaleString()}</span>
-                  <span class="text-xs font-mono" style="color: var(--color-orange-accent);">cache write: ${totalWrite.toLocaleString()}</span>
                   <span class="text-xs font-mono" style="color: var(--color-orange-accent);">cache read: ${totalCache.toLocaleString()}</span>
                   <span class="text-xs font-mono" style="color: var(--color-gray);">${data.records.length} requests</span>
                 </div>`;
@@ -877,26 +874,24 @@
             }
 
             // 计算总计
-            let totalIn = 0, totalRegular = 0, totalOut = 0, totalWrite = 0, totalCache = 0, totalReqs = 0;
+            let totalIn = 0, totalRegular = 0, totalOut = 0, totalCache = 0, totalReqs = 0;
             models.forEach(([, u]) => {
               totalIn += getTotalInputTokens(u);
               totalRegular += u.input_tokens;
               totalOut += u.output_tokens;
-              totalWrite += u.cache_creation_input_tokens ?? 0;
               totalCache += u.cache_read_input_tokens;
               totalReqs += u.request_count;
             });
 
             tokenUsageContent.innerHTML = `
               <div class="border overflow-x-auto" style="border-color: var(--color-bg-light-2);">
-                <table class="w-full text-sm whitespace-nowrap" style="min-width: 960px;">
+                <table class="w-full text-sm whitespace-nowrap" style="min-width: 840px;">
                   <thead>
                     <tr style="background-color: var(--color-bg-light-1);">
                       <th class="text-left px-4 py-2" style="color: var(--color-fg-lightest);">Model</th>
                       <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Requests</th>
                       <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Total Input</th>
                       <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Regular Input</th>
-                      <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Cache Write</th>
                       <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Cache Read</th>
                       <th class="text-right px-4 py-2" style="color: var(--color-fg-lightest);">Output Tokens</th>
                     </tr>
@@ -908,7 +903,6 @@
                         <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.request_count.toLocaleString()}</td>
                         <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${getTotalInputTokens(u).toLocaleString()}</td>
                         <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.input_tokens.toLocaleString()}</td>
-                        <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${(u.cache_creation_input_tokens ?? 0).toLocaleString()}</td>
                         <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.cache_read_input_tokens.toLocaleString()}</td>
                         <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-medium);">${u.output_tokens.toLocaleString()}</td>
                       </tr>
@@ -918,7 +912,6 @@
                       <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalReqs.toLocaleString()}</td>
                       <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalIn.toLocaleString()}</td>
                       <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalRegular.toLocaleString()}</td>
-                      <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalWrite.toLocaleString()}</td>
                       <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalCache.toLocaleString()}</td>
                       <td class="text-right px-4 py-2 font-mono" style="color: var(--color-fg-lightest);">${totalOut.toLocaleString()}</td>
                     </tr>

@@ -285,9 +285,10 @@ The dashboard provides a user-friendly interface to view your Copilot usage data
 The local `/dashboard` displays cumulative per-model token usage from `/token-usage`, separately from GitHub account quotas:
 
 - **Regular Input** (`input_tokens`): Input that was neither read from nor written to the cache.
-- **Cache Write** (`cache_creation_input_tokens`): Input processed and written to the cache on this request, including newly cached system prompts and messages.
 - **Cache Read** (`cache_read_input_tokens`): Input reused from the cache.
-- **Total Input**: The sum of Regular Input, Cache Write, and Cache Read.
+- **Total Input**: The sum of Regular Input, cache writes, and Cache Read.
+
+Cache writes (`cache_creation_input_tokens`) are still recorded by `/token-usage` and included in Total Input, but are not shown separately in the dashboard.
 
 OpenAI usage is normalized so cached input is not counted twice. Streaming usage snapshots are merged and recorded once per request, including input reported only in the initial event.
 
