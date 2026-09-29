@@ -3,8 +3,16 @@ name: Publish to npm
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
 jobs:
   publish:
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,23 +21,73 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Read package version
-        id: pkg
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Check if version already published
-        run: |
-          if npm view "@bzssm/copilot-api@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
-            echo "::error::@bzssm/copilot-api@${{ steps.pkg.outputs.version }} is already published on npm."
-            exit 1
-          fi
-          echo "Version ${{ steps.pkg.outputs.version }} is not yet published. Proceeding."
-
       - name: Install dependencies
         run: bun install
 
+      # Build before touching git so a broken build never leaves a pushed tag behind.
       - name: Build
         run: bun run build
+
+      - name: Determine release version
+        id: version
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          CURRENT=$(node -p "require('./package.json').version")
+          # npm view fails with 404 before the first publish
+          if ! PUBLISHED=$(npm view "$PKG_NAME" versions --json 2>/dev/null); then
+            PUBLISHED='[]'
+          fi
+          export CURRENT PUBLISHED
+          bun -e '
+            const { appendFileSync } = require("node:fs")
+            const current = process.env.CURRENT
+            let published = JSON.parse(process.env.PUBLISHED)
+            // npm returns a bare string when only one version exists
+            if (!Array.isArray(published)) published = [published]
+
+            const setOutput = (version, bump) =>
+              appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nbump=${bump}\n`)
+
+            if (!published.includes(current)) {
+              console.log(`${current} is not on npm yet; publishing it as is.`)
+              setOutput(current, false)
+              process.exit(0)
+            }
+
+            const latest = published.reduce((a, b) => (Bun.semver.order(a, b) >= 0 ? a : b))
+            const base = Bun.semver.order(current, latest) >= 0 ? current : latest
+            const [major, minor] = base.split(".").map(Number)
+            const next = `${major}.${minor + 1}.0`
+            if (published.includes(next)) {
+              console.log(`::error::Computed version ${next} is already published on npm.`)
+              process.exit(1)
+            }
+            console.log(`${current} is already on npm (latest ${latest}); bumping to ${next}.`)
+            setOutput(next, true)
+          '
+
+      - name: Bump version, commit and tag
+        if: steps.version.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists on the remote."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version "$VERSION" --no-git-tag-version
+          git add package.json package-lock.json
+          git commit -m "chore(release): v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+
+      # Atomic so master and the tag either both land or neither does; rejected if master moved meanwhile.
+      - name: Push commit and tag
+        if: steps.version.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: git push --atomic origin "HEAD:refs/heads/master" "refs/tags/v$VERSION"
 
       - name: Configure npm auth
         run: echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > .npmrc
