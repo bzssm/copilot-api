@@ -1,4 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition, eqeqeq, complexity, no-nested-ternary -- pre-existing, tracked as tech debt */
+import type { Context } from "hono"
+
+import consola from "consola"
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
@@ -7,12 +10,25 @@ import { cacheModels } from "~/lib/utils"
 
 export const modelRoutes = new Hono()
 
+function shouldAddOneMillionSuffix(c: Context): boolean {
+  const userAgent = c.req.header("user-agent")
+  if (userAgent?.startsWith("claude-code/")) return true
+  // Future conditions for exposing the [1m] suffix go here
+  return false
+}
+
 modelRoutes.get("/", async (c) => {
   try {
+    consola.info("Models request headers:", JSON.stringify(c.req.header()))
+    const requestBody = await c.req.text()
+    consola.info("Models request body:", requestBody || "<empty>")
+
     if (!state.models) {
       // This should be handled by startup logic, but as a fallback.
       await cacheModels()
     }
+
+    const addOneMillionSuffix = shouldAddOneMillionSuffix(c)
 
     const models = state.models?.data.map((model) => {
       const effortLevels = model.capabilities?.supports?.reasoning_effort
@@ -29,7 +45,11 @@ modelRoutes.get("/", async (c) => {
       const contextWindow =
         model.capabilities?.limits?.max_context_window_tokens
       const idSuffix =
-        (contextWindow ?? 0) > 950000 && (contextWindow ?? 0) < 1200000 ?
+        (
+          addOneMillionSuffix
+          && (contextWindow ?? 0) > 950000
+          && (contextWindow ?? 0) < 1200000
+        ) ?
           "[1m]"
         : ""
 

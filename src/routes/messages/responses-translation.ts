@@ -21,7 +21,6 @@ import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
   AnthropicTextBlock,
-  AnthropicThinkingBlock,
   AnthropicToolResultBlock,
   AnthropicToolUseBlock,
 } from "./anthropic-types"
@@ -45,6 +44,9 @@ export function translateAnthropicToResponses(
     stream: payload.stream,
     tools: translateAnthropicToolsToResponses(payload.tools),
     tool_choice: translateAnthropicToolChoiceToResponses(payload.tool_choice),
+    ...(payload.thinking?.display === "summarized" && {
+      reasoning: { summary: "auto" },
+    }),
   }
 }
 
@@ -137,15 +139,15 @@ function translateAssistantMessageToResponses(
   const toolUseBlocks = message.content.filter(
     (block): block is AnthropicToolUseBlock => block.type === "tool_use",
   )
+  // Thinking blocks are dropped: the Responses API cannot carry them back
+  // without encrypted_content, and echoing summaries as output_text would
+  // pollute the conversation.
   const textBlocks = message.content.filter(
-    (block): block is AnthropicTextBlock | AnthropicThinkingBlock =>
-      block.type === "text" || block.type === "thinking",
+    (block): block is AnthropicTextBlock => block.type === "text",
   )
 
   if (textBlocks.length > 0) {
-    const text = textBlocks
-      .map((b) => (b.type === "text" ? b.text : b.thinking))
-      .join("\n\n")
+    const text = textBlocks.map((b) => b.text).join("\n\n")
     items.push({
       type: "message",
       role: "assistant",
@@ -254,7 +256,12 @@ function translateResponsesOutputToAnthropicContent(
   const content: AnthropicResponse["content"] = []
 
   for (const item of output) {
-    if (item.type === "message" && item.role === "assistant") {
+    if (item.type === "reasoning") {
+      const summary = item.summary.map((part) => part.text).join("\n\n")
+      if (summary) {
+        content.push({ type: "thinking", thinking: summary })
+      }
+    } else if (item.type === "message" && item.role === "assistant") {
       for (const part of item.content) {
         if (part.type === "output_text") {
           content.push({ type: "text", text: part.text })
@@ -314,6 +321,9 @@ export function translateResponsesPayloadToAnthropic(
     top_p: isGpt5OrAbove(payload.model) ? undefined : payload.top_p,
     tools: translateResponsesToolsToAnthropic(payload.tools),
     tool_choice: translateResponsesToolChoiceToAnthropic(payload.tool_choice),
+    ...(payload.reasoning?.summary !== undefined && {
+      thinking: { type: "adaptive", display: "summarized" },
+    }),
   }
 }
 

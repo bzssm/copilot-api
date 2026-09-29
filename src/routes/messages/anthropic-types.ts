@@ -21,6 +21,7 @@ export interface AnthropicMessagesPayload {
   thinking?: {
     type: "enabled" | "adaptive"
     budget_tokens?: number
+    display?: "summarized" | "omitted"
   }
   service_tier?: "auto" | "standard_only"
   output_config?: {

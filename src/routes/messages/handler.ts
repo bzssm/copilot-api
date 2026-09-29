@@ -150,7 +150,15 @@ async function handleNativeMessages(
   }
   if (payload.thinking) {
     if (selectedModel?.capabilities?.supports?.adaptive_thinking) {
-      payload = { ...payload, thinking: { type: "adaptive" } }
+      payload = {
+        ...payload,
+        thinking: {
+          type: "adaptive",
+          ...(payload.thinking.display != null && {
+            display: payload.thinking.display,
+          }),
+        },
+      }
       // Following is an ideal way to set the thinking budget, but it is commented out because it does not supported by copilot yet.
       // copilot only supports adaptive thinking without budget settings.
       // payload = {
@@ -428,7 +436,11 @@ async function handleViaResponses(
   consola.debug("Streaming responses response")
   return streamSSE(c, async (stream) => {
     const collectedEvents: Array<unknown> = []
-    let messageStartSent = false
+    const streamState: ResponsesStreamState = {
+      messageStartSent: false,
+      nextBlockIndex: 0,
+      blockIndexByKey: new Map(),
+    }
     const requestUsage = createRequestUsageTracker(anthropicPayload.model)
 
     try {
@@ -465,11 +477,11 @@ async function handleViaResponses(
         // Translate Responses streaming events to Anthropic streaming events
         const anthropicEvents = translateResponsesStreamEventToAnthropic(
           event,
-          messageStartSent,
+          streamState,
           anthropicPayload.model,
         )
 
-        for (const anthropicEvent of anthropicEvents.events) {
+        for (const anthropicEvent of anthropicEvents) {
           if (state.sessionLog && sessionId) {
             collectedEvents.push(anthropicEvent)
           }
@@ -478,10 +490,6 @@ async function handleViaResponses(
             event: anthropicEvent.type,
             data: JSON.stringify(anthropicEvent),
           })
-        }
-
-        if (anthropicEvents.messageStartSent) {
-          messageStartSent = true
         }
       }
     } catch (error) {
@@ -507,20 +515,60 @@ async function handleViaResponses(
   })
 }
 
+interface ResponsesStreamState {
+  messageStartSent: boolean
+  nextBlockIndex: number
+  // Anthropic content block index per Responses output item (or content part),
+  // so reasoning / message / function_call items never collide on index 0.
+  blockIndexByKey: Map<string, number>
+}
+
+type AnthropicStreamEvent = { type: string; [key: string]: unknown }
+
+function responsesBlockKey(outputIndex: number, contentIndex?: number): string {
+  return contentIndex === undefined ?
+      `${outputIndex}`
+    : `${outputIndex}:${contentIndex}`
+}
+
 function translateResponsesStreamEventToAnthropic(
   event: Record<string, unknown>,
-  messageStartSent: boolean,
+  streamState: ResponsesStreamState,
   model: string,
-): {
-  events: Array<{ type: string; [key: string]: unknown }>
-  messageStartSent: boolean
-} {
-  const anthropicEvents: Array<{ type: string; [key: string]: unknown }> = []
-  let newMessageStartSent = messageStartSent
+): Array<AnthropicStreamEvent> {
+  const anthropicEvents: Array<AnthropicStreamEvent> = []
+  const outputIndex = (event.output_index as number) ?? 0
+  const contentIndex = (event.content_index as number) ?? 0
+
+  // Emits content_block_start the first time a key is seen and returns its index
+  const openBlock = (
+    key: string,
+    contentBlock: Record<string, unknown>,
+  ): number => {
+    let index = streamState.blockIndexByKey.get(key)
+    if (index === undefined) {
+      index = streamState.nextBlockIndex
+      streamState.nextBlockIndex += 1
+      streamState.blockIndexByKey.set(key, index)
+      anthropicEvents.push({
+        type: "content_block_start",
+        index,
+        content_block: contentBlock,
+      })
+    }
+    return index
+  }
+
+  const closeBlock = (key: string): void => {
+    const index = streamState.blockIndexByKey.get(key)
+    if (index !== undefined) {
+      anthropicEvents.push({ type: "content_block_stop", index })
+    }
+  }
 
   switch (event.type) {
     case "response.created": {
-      if (!messageStartSent) {
+      if (!streamState.messageStartSent) {
         const resp = event.response as ResponsesResponse | undefined
         anthropicEvents.push({
           type: "message_start",
@@ -535,78 +583,110 @@ function translateResponsesStreamEventToAnthropic(
             usage: { input_tokens: 0, output_tokens: 0 },
           },
         })
-        newMessageStartSent = true
+        streamState.messageStartSent = true
       }
-      break
-    }
-    case "response.output_text.delta": {
-      const delta = event.delta as string
-      anthropicEvents.push({
-        type: "content_block_delta",
-        index: (event.content_index as number) ?? 0,
-        delta: { type: "text_delta", text: delta },
-      })
-      break
-    }
-    case "response.content_part.added": {
-      const part = event.part as { type: string } | undefined
-      if (part?.type === "output_text") {
-        anthropicEvents.push({
-          type: "content_block_start",
-          index: (event.content_index as number) ?? 0,
-          content_block: { type: "text", text: "" },
-        })
-      }
-      break
-    }
-    case "response.content_part.done": {
-      anthropicEvents.push({
-        type: "content_block_stop",
-        index: (event.content_index as number) ?? 0,
-      })
-      break
-    }
-    case "response.function_call_arguments.delta": {
-      // Tool call argument streaming — accumulate, emit on done
       break
     }
     case "response.output_item.added": {
       const item = event.item as
         | { type: string; call_id?: string; name?: string }
         | undefined
-      if (item?.type === "function_call" && item.name && item.call_id) {
-        anthropicEvents.push({
-          type: "content_block_start",
-          index: (event.output_index as number) ?? 0,
-          content_block: {
-            type: "tool_use",
-            id: item.call_id,
-            name: item.name,
-            input: {},
-          },
+      if (item?.type === "reasoning") {
+        openBlock(responsesBlockKey(outputIndex), {
+          type: "thinking",
+          thinking: "",
+        })
+      } else if (item?.type === "function_call" && item.name && item.call_id) {
+        openBlock(responsesBlockKey(outputIndex), {
+          type: "tool_use",
+          id: item.call_id,
+          name: item.name,
+          input: {},
         })
       }
       break
     }
+    case "response.reasoning_summary_part.added": {
+      const index = openBlock(responsesBlockKey(outputIndex), {
+        type: "thinking",
+        thinking: "",
+      })
+      // Consecutive summary parts share one thinking block; keep them readable
+      if (((event.summary_index as number) ?? 0) > 0) {
+        anthropicEvents.push({
+          type: "content_block_delta",
+          index,
+          delta: { type: "thinking_delta", thinking: "\n\n" },
+        })
+      }
+      break
+    }
+    case "response.reasoning_summary_text.delta": {
+      const index = openBlock(responsesBlockKey(outputIndex), {
+        type: "thinking",
+        thinking: "",
+      })
+      anthropicEvents.push({
+        type: "content_block_delta",
+        index,
+        delta: { type: "thinking_delta", thinking: event.delta as string },
+      })
+      break
+    }
+    case "response.content_part.added": {
+      const part = event.part as { type: string } | undefined
+      if (part?.type === "output_text") {
+        openBlock(responsesBlockKey(outputIndex, contentIndex), {
+          type: "text",
+          text: "",
+        })
+      }
+      break
+    }
+    case "response.output_text.delta": {
+      const index = openBlock(responsesBlockKey(outputIndex, contentIndex), {
+        type: "text",
+        text: "",
+      })
+      anthropicEvents.push({
+        type: "content_block_delta",
+        index,
+        delta: { type: "text_delta", text: event.delta as string },
+      })
+      break
+    }
+    case "response.content_part.done": {
+      closeBlock(responsesBlockKey(outputIndex, contentIndex))
+      break
+    }
+    case "response.function_call_arguments.delta": {
+      // Tool call argument streaming — accumulate, emit on done
+      break
+    }
     case "response.output_item.done": {
       const item = event.item as
-        | { type: string; arguments?: string }
+        | { type: string; call_id?: string; name?: string; arguments?: string }
         | undefined
-      if (item?.type === "function_call") {
+      if (item?.type === "reasoning") {
+        closeBlock(responsesBlockKey(outputIndex))
+      } else if (item?.type === "function_call" && item.name && item.call_id) {
+        const index = openBlock(responsesBlockKey(outputIndex), {
+          type: "tool_use",
+          id: item.call_id,
+          name: item.name,
+          input: {},
+        })
         if (item.arguments) {
           anthropicEvents.push({
             type: "content_block_delta",
-            index: (event.output_index as number) ?? 0,
+            index,
             delta: {
               type: "input_json_delta",
               partial_json: item.arguments,
             },
           })
         }
-        anthropicEvents.push({
-          type: "content_block_stop",
-          index: (event.output_index as number) ?? 0,
-        })
+        anthropicEvents.push({ type: "content_block_stop", index })
       }
       break
     }
@@ -632,5 +712,5 @@ function translateResponsesStreamEventToAnthropic(
     }
   }
 
-  return { events: anthropicEvents, messageStartSent: newMessageStartSent }
+  return anthropicEvents
 }

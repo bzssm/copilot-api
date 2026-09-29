@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 
 import type { State } from "./state"
 
+import { getForwardedHeaders } from "./forwarded-headers"
 import { generateRequestHmac } from "./hmac"
 
 export const standardHeaders = () => ({
@@ -20,7 +21,9 @@ export const copilotBaseUrl = (state: State) =>
     "https://api.githubcopilot.com"
   : `https://api.${state.accountType}.githubcopilot.com`
 export const copilotHeaders = (state: State, vision: boolean = false) => {
+  // Forwarded client headers go first so the proxy's own headers always win.
   const headers: Record<string, string> = {
+    ...getForwardedHeaders(),
     "content-type": standardHeaders()["content-type"],
     "copilot-integration-id": "vscode-chat",
     "editor-version": `vscode/${state.vsCodeVersion}`,

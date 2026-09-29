@@ -4,6 +4,10 @@ import { logger } from "hono/logger"
 import fs from "node:fs/promises"
 import path from "node:path"
 
+import {
+  pickForwardedHeaders,
+  runWithForwardedHeaders,
+} from "./lib/forwarded-headers"
 import { getSession, getSessions } from "./lib/session-store"
 import { getUsageStats } from "./lib/usage-tracker"
 import { completionRoutes } from "./routes/chat-completions/route"
@@ -20,6 +24,9 @@ export const server = new Hono()
 
 server.use(logger())
 server.use(cors())
+server.use((c, next) =>
+  runWithForwardedHeaders(pickForwardedHeaders(c.req.header()), next),
+)
 
 server.get("/", (c) => c.text("Server running"))
 

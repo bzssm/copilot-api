@@ -48,7 +48,10 @@ export interface ResponsesPayload {
     | "none"
     | "required"
     | { type: "function"; name: string }
-  reasoning?: { effort?: "low" | "medium" | "high" }
+  reasoning?: {
+    effort?: "low" | "medium" | "high"
+    summary?: "auto" | "concise" | "detailed"
+  }
   text?: {
     format:
       | { type: "text" }
@@ -94,6 +97,14 @@ export interface ResponsesFunctionCallOutput {
   output: string
 }
 
+export interface ResponsesReasoningItem {
+  type: "reasoning"
+  id?: string
+  summary: Array<{ type: "summary_text"; text: string }>
+  encrypted_content?: string
+  status?: "in_progress" | "completed" | "incomplete"
+}
+
 export type ResponsesContentPart =
   | { type: "input_text"; text: string }
   | {
@@ -133,4 +144,7 @@ export interface ResponsesResponse {
   error?: { code: string; message: string } | null
 }
 
-export type ResponsesOutputItem = ResponsesOutputMessage | ResponsesFunctionCall
+export type ResponsesOutputItem =
+  | ResponsesOutputMessage
+  | ResponsesFunctionCall
+  | ResponsesReasoningItem
