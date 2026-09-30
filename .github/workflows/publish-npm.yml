@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: publish-npm
@@ -16,6 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Update npm
+        run: npm install --global npm@latest
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -89,10 +98,5 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: git push --atomic origin "HEAD:refs/heads/master" "refs/tags/v$VERSION"
 
-      - name: Configure npm auth
-        run: echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > .npmrc
-
       - name: Publish to npm
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
