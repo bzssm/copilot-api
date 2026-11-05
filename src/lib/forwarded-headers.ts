@@ -9,6 +9,7 @@ const FORWARDED_HEADER_NAMES = new Set([
   "x-stainless-runtime",
   "x-stainless-runtime-version",
   "x-stainless-timeout",
+  "anthropic-beta",
 ])
 
 const storage = new AsyncLocalStorage<Record<string, string>>()
