@@ -164,6 +164,17 @@ The following command line options are available for the `start` command:
 | --claude-code  | Generate a command to launch Claude Code with Copilot API config              | false      | -c    |
 | --show-token   | Show GitHub and Copilot tokens on fetch and refresh                           | false      | none  |
 | --proxy-env    | Initialize proxy from environment variables                                   | false      | none  |
+| --strict-model-name | Require an exact, case-sensitive model ID for generation requests        | false      | none  |
+
+By default, generation requests strip a trailing `[1m]` and check for an exact
+model ID. Otherwise, a single alias check ignores case and treats `.` and `-`
+as interchangeable anywhere in the name. For example, `Claude.Opus-5.5` and
+`claude.opus.5-5[1m]` both resolve to `claude-opus-5.5` if that is the available
+ID. If several IDs match the same alias, the first in the model list wins.
+The server tries fuzzy matching only if neither check succeeds, then forwards
+the suffix-stripped name as-is if there is no close match. With
+`--strict-model-name`, the original name must match an available ID exactly;
+otherwise the server returns HTTP 400 without forwarding the request.
 
 ### Auth Command Options
 

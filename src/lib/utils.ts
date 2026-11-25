@@ -4,6 +4,7 @@ import consola from "consola"
 import { getModels } from "~/services/copilot/get-models"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 
+import { HTTPError } from "./error"
 import { state } from "./state"
 
 export const sleep = (ms: number) =>
@@ -43,43 +44,42 @@ function levenshtein(a: string, b: string): number {
 const FUZZY_MODEL_THRESHOLD = 0.2
 const ONE_MILLION_CONTEXT_SUFFIX = "[1m]"
 
+const modelAliasKey = (name: string) => name.toLowerCase().replaceAll(".", "-")
+
 /**
- * Resolves a requested model name to an available model id.
- *
- * Order: strip the public context suffix -> exact match -> case-insensitive
- * exact match -> (opt-in) Levenshtein fuzzy match. Fuzzy matching only runs
- * when `state.fuzzyModelMatch` is enabled and the closest candidate is within
- * `FUZZY_MODEL_THRESHOLD` relative distance. When nothing matches confidently
- * the normalized input is returned unchanged so the upstream API decides how
- * to handle it.
+ * Strict mode requires the original model ID. Otherwise, normalize the context
+ * suffix and check exact IDs and aliases before using edit distance.
  */
 export function resolveModelName(input: string): string {
+  const available = state.models?.data.map((model) => model.id) ?? []
+  if (state.strictModelName) {
+    if (available.includes(input)) return input
+
+    const message = `Model "${input}" does not exactly match an available model ID`
+    throw new HTTPError(message, new Response(message, { status: 400 }))
+  }
+
   const normalizedInput =
     input.endsWith(ONE_MILLION_CONTEXT_SUFFIX) ?
       input.slice(0, -ONE_MILLION_CONTEXT_SUFFIX.length)
     : input
-  const available = state.models?.data.map((model) => model.id) ?? []
   if (available.length === 0) return normalizedInput
 
   // 1. Exact match
   if (available.includes(normalizedInput)) return normalizedInput
 
-  const lowerInput = normalizedInput.toLowerCase()
-
-  // 2. Case-insensitive exact match
-  const caseMatch = available.find(
-    (model) => model.toLowerCase() === lowerInput,
+  const aliasKey = modelAliasKey(normalizedInput)
+  const aliasMatch = available.find(
+    (model) => modelAliasKey(model) === aliasKey,
   )
-  if (caseMatch) {
+  if (aliasMatch) {
     consola.info(
-      `Resolved model "${input}" -> "${caseMatch}" (case-insensitive)`,
+      `Resolved model "${input}" -> "${aliasMatch}" (normalized alias)`,
     )
-    return caseMatch
+    return aliasMatch
   }
 
-  // 3. Levenshtein fuzzy match (opt-in via --fuzzy-model)
-  if (!state.fuzzyModelMatch) return normalizedInput
-
+  const lowerInput = normalizedInput.toLowerCase()
   let bestMatch = normalizedInput
   let bestDistance = Infinity
   for (const model of available) {
@@ -99,7 +99,9 @@ export function resolveModelName(input: string): string {
     return bestMatch
   }
 
-  consola.warn(`No close model match for "${input}", passing through unchanged`)
+  consola.warn(
+    `No close model match for "${input}", passing through "${normalizedInput}"`,
+  )
   return normalizedInput
 }
 

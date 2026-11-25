@@ -27,7 +27,7 @@ interface RunServerOptions {
   showToken: boolean
   proxyEnv: boolean
   sessionLog: boolean
-  fuzzyModelMatch: boolean
+  strictModelName: boolean
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -50,7 +50,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
   state.sessionLog = options.sessionLog
-  state.fuzzyModelMatch = options.fuzzyModelMatch
+  state.strictModelName = options.strictModelName
 
   await ensurePaths()
   await cacheVSCodeVersion()
@@ -195,11 +195,11 @@ export const start = defineCommand({
       default: false,
       description: "Enable session logging to local files",
     },
-    "fuzzy-model": {
+    "strict-model-name": {
       type: "boolean",
       default: false,
       description:
-        "Enable fuzzy matching of requested model names to the closest available model",
+        "Reject requests unless the model name exactly matches an available model ID",
     },
   },
   run({ args }) {
@@ -221,7 +221,7 @@ export const start = defineCommand({
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],
       sessionLog: args["session-log"],
-      fuzzyModelMatch: args["fuzzy-model"],
+      strictModelName: args["strict-model-name"],
     })
   },
 })
